@@ -508,14 +508,20 @@ async def sync_orders(
                 # 1. Сначала проверяем, есть ли в ответе CSFloat
                 market_hash_name = market_hash_name_field if market_hash_name_field else None
 
-                # 2. Если нет, используем skin_lookup для получения названия
+                # 2. Проверяем есть ли Item == "название" в expression
+                if not market_hash_name:
+                    item_match = re.search(r'Item\s*==\s*["\']([^"\']+)["\']', expression)
+                    if item_match:
+                        market_hash_name = item_match.group(1)
+                        logger.info(f"Extracted item name from expression: {market_hash_name}")
+
+                # 3. Если всё ещё нет, используем skin_lookup
                 if not market_hash_name:
                     from skin_lookup import get_skin_info, build_fallback_name
 
                     if def_index and paint_index:
                         logger.info(f"Fetching item name for DefIndex={def_index}, PaintIndex={paint_index}")
                         try:
-                            # Пробуем получить из API/кэша
                             fetched_name, fetched_icon = await get_skin_info(
                                 def_index, paint_index, float_min, float_max
                             )
@@ -525,10 +531,8 @@ async def sync_orders(
                                 logger.info(f"Got skin info: {market_hash_name}")
                         except Exception as e:
                             logger.warning(f"Error fetching skin info: {e}")
-                            # Fallback к читаемому названию
                             market_hash_name = build_fallback_name(def_index, paint_index, float_min, float_max)
                     else:
-                        # Нет DefIndex/PaintIndex - используем expression
                         market_hash_name = expression
                 else:
                     logger.info(f"Using market_hash_name from CSFloat response: {market_hash_name}")

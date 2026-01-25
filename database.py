@@ -117,21 +117,40 @@ class Database:
         """Инициализация базы данных"""
         logger.info(f"Initializing database: {settings.database_url}")
 
+        # Для SQLite добавляем настройки для избежания блокировок
+        connect_args = {}
+        if "sqlite" in settings.database_url:
+            connect_args = {
+                "timeout": 30,  # Ждать 30 секунд при блокировке
+                "check_same_thread": False
+            }
+
         self.engine = create_async_engine(
             settings.database_url,
             echo=False,
-            future=True
+            future=True,
+            connect_args=connect_args,
+            pool_pre_ping=True  # Проверять соединение перед использованием
         )
 
         self.session_factory = async_sessionmaker(
             self.engine,
             class_=AsyncSession,
-            expire_on_commit=False
+            expire_on_commit=False,
+            autoflush=False  # Отключаем autoflush для избежания блокировок
         )
 
-        # Создаем таблицы
+        # Создаем таблицы и включаем WAL режим для SQLite
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+            # Включаем WAL режим для лучшей параллельности
+            if "sqlite" in settings.database_url:
+                from sqlalchemy import text
+                await conn.execute(text("PRAGMA journal_mode=WAL"))
+                await conn.execute(text("PRAGMA busy_timeout=30000"))
+                await conn.execute(text("PRAGMA synchronous=NORMAL"))
+                logger.info("SQLite WAL mode enabled")
 
         logger.info("Database initialized successfully")
 

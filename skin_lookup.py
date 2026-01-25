@@ -70,6 +70,92 @@ WEAPON_NAMES = {
     526: "Kukri Knife",
 }
 
+# Popular Paint Index to Skin Name mapping
+# Key: (def_index, paint_index) -> skin_name (without weapon prefix)
+PAINT_NAMES = {
+    # Glock-18 (def_index=4)
+    (4, 3): "Fade",
+    (4, 38): "Dragon Tattoo",
+    (4, 48): "Candy Apple",
+    (4, 60): "Water Elemental",
+    (4, 680): "Bullet Queen",
+    (4, 1208): "Shinobu",
+    (4, 1215): "Gold Toof",
+    (4, 1162): "Winterized",
+    (4, 367): "Twilight Galaxy",
+
+    # FAMAS (def_index=10)
+    (10, 178): "Pulse",
+    (10, 248): "Styx",
+    (10, 294): "Djinn",
+    (10, 644): "Mecha Industries",
+    (10, 838): "Eye of Athena",
+    (10, 1202): "Darkwing",
+    (10, 1143): "Rapid Eye Movement",
+
+    # AK-47 (def_index=7)
+    (7, 44): "Case Hardened",
+    (7, 180): "Fire Serpent",
+    (7, 282): "Redline",
+    (7, 302): "Wasteland Rebel",
+    (7, 380): "Aquamarine Revenge",
+    (7, 456): "Fuel Injector",
+    (7, 524): "Bloodsport",
+    (7, 639): "Neon Rider",
+    (7, 675): "The Empress",
+    (7, 801): "Asiimov",
+    (7, 1019): "Nightwish",
+
+    # AWP (def_index=9)
+    (9, 84): "Graphite",
+    (9, 174): "Electric Hive",
+    (9, 227): "Redline",
+    (9, 279): "Asiimov",
+    (9, 344): "Man-o'-war",
+    (9, 395): "Hyper Beast",
+    (9, 662): "Neo-Noir",
+    (9, 756): "Wildfire",
+    (9, 1095): "Chromatic Aberration",
+    (9, 446): "Dragon Lore",
+
+    # M4A4 (def_index=16)
+    (16, 255): "Asiimov",
+    (16, 309): "Howl",
+    (16, 336): "Dragon King",
+    (16, 400): "Royal Paladin",
+    (16, 471): "Desolate Space",
+    (16, 512): "Buzz Kill",
+    (16, 632): "Neo-Noir",
+    (16, 844): "The Emperor",
+
+    # M4A1-S (def_index=60)
+    (60, 254): "Cyrex",
+    (60, 301): "Hyper Beast",
+    (60, 326): "Icarus Fell",
+    (60, 360): "Golden Coil",
+    (60, 445): "Mecha Industries",
+    (60, 587): "Decimator",
+    (60, 631): "Nightmare",
+    (60, 1001): "Welcome to the Jungle",
+
+    # USP-S (def_index=61)
+    (61, 60): "Dark Water",
+    (61, 217): "Caiman",
+    (61, 227): "Orion",
+    (61, 313): "Kill Confirmed",
+    (61, 504): "Neo-Noir",
+    (61, 653): "Cortex",
+    (61, 1122): "Ticket to Hell",
+
+    # Desert Eagle (def_index=1)
+    (1, 27): "Blaze",
+    (1, 37): "Golden Koi",
+    (1, 277): "Conspiracy",
+    (1, 711): "Mecha Industries",
+    (1, 831): "Printstream",
+}
+
+
 # Float ranges to wear names
 def get_wear_name(float_min: Optional[float], float_max: Optional[float]) -> str:
     """Determine wear name from float range"""
@@ -144,10 +230,21 @@ def build_fallback_name(
     weapon = WEAPON_NAMES.get(def_index, f"Weapon #{def_index}")
     wear = get_wear_name(float_min, float_max)
 
-    if wear:
-        return f"{weapon} | Skin #{paint_index} ({wear})"
+    # Try to get skin name from our database
+    skin_name = PAINT_NAMES.get((def_index, paint_index))
+
+    if skin_name:
+        # Found in our database
+        if wear:
+            return f"{weapon} | {skin_name} ({wear})"
+        else:
+            return f"{weapon} | {skin_name}"
     else:
-        return f"{weapon} | Skin #{paint_index}"
+        # Unknown skin - use paint index
+        if wear:
+            return f"{weapon} | Skin #{paint_index} ({wear})"
+        else:
+            return f"{weapon} | Skin #{paint_index}"
 
 
 async def get_skin_info(
