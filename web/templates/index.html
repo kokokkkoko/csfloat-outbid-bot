@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSFloat Outbid Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .status-online { color: #10b981; }
+        .status-error { color: #ef4444; }
+        .status-idle { color: #6b7280; }
+        .status-rate_limited { color: #f59e0b; }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800">
+                        <i class="fas fa-robot text-blue-600"></i>
+                        CSFloat Outbid Bot
+                    </h1>
+                    <p class="text-gray-600 mt-1">Automatic buy order management</p>
+                </div>
+                <div class="flex gap-4">
+                    <button id="startBot" class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition">
+                        <i class="fas fa-play"></i> Start
+                    </button>
+                    <button id="stopBot" class="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg transition">
+                        <i class="fas fa-stop"></i> Stop
+                    </button>
+                </div>
+            </div>
+
+            <!-- Bot Status -->
+            <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+                <div class="grid grid-cols-4 gap-4">
+                    <div>
+                        <p class="text-sm text-gray-600">Status</p>
+                        <p id="botStatus" class="font-semibold">Loading...</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Check Interval</p>
+                        <p id="checkInterval" class="font-semibold">-</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Outbid Step</p>
+                        <p id="outbidStep" class="font-semibold">-</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-600">Max Outbids</p>
+                        <p id="maxOutbids" class="font-semibold">-</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-cog"></i> Settings
+            </h2>
+            <div class="grid grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Check Interval (seconds)</label>
+                    <input type="number" id="settingInterval" class="w-full px-3 py-2 border border-gray-300 rounded-md" value="120">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Outbid Step ($)</label>
+                    <input type="number" step="0.01" id="settingStep" class="w-full px-3 py-2 border border-gray-300 rounded-md" value="0.01">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Max Outbids</label>
+                    <input type="number" id="settingMaxOutbids" class="w-full px-3 py-2 border border-gray-300 rounded-md" value="10">
+                </div>
+            </div>
+            <button id="saveSettings" class="mt-4 bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition">
+                <i class="fas fa-save"></i> Save Settings
+            </button>
+        </div>
+
+        <!-- Accounts -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-users"></i> Accounts
+                </h2>
+                <button id="addAccountBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition">
+                    <i class="fas fa-plus"></i> Add Account
+                </button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">API Key</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proxy</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Check</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="accountsTable" class="bg-white divide-y divide-gray-200">
+                        <!-- Accounts will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Active Orders -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-list"></i> Active Orders
+                </h2>
+                <button id="refreshOrders" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition">
+                    <i class="fas fa-sync"></i> Refresh
+                </button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Float Range</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outbids</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Max Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ordersTable" class="bg-white divide-y divide-gray-200">
+                        <!-- Orders will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Outbid History -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-history"></i> Outbid History
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Timestamp</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Old Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">New Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Competitor</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTable" class="bg-white divide-y divide-gray-200">
+                        <!-- History will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Account Modal -->
+    <div id="addAccountModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <h3 class="text-lg font-bold mb-4">Add New Account</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                    <input type="text" id="newAccountName" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="My Account">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                    <input type="text" id="newAccountKey" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="Your CSFloat API key">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Proxy (optional)</label>
+                    <input type="text" id="newAccountProxy" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="http://user:pass@ip:port">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-6">
+                <button id="saveAccount" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition">Save</button>
+                <button id="cancelAccount" class="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
