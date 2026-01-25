@@ -35,6 +35,8 @@ echo.
 echo ========================================
 echo   Bot is running!
 echo   Web interface: http://localhost:8000
+echo   Login page:    http://localhost:8000/login
+echo   Admin panel:   http://localhost:8000/admin
 echo   Press Ctrl+C to stop
 echo ========================================
 echo.

@@ -16,13 +16,47 @@ class OutbidLogic:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    def calculate_price_ceiling(self, lowest_listing_cents: int) -> int:
+        """
+        Рассчитать потолок цены на основе lowest listing
+
+        Args:
+            lowest_listing_cents: Цена самого дешёвого листинга в центах
+
+        Returns:
+            Максимально допустимая цена для перебивания в центах
+        """
+        # Вариант 1: multiplier (например 1.20 = +20% от lowest)
+        from_multiplier = int(lowest_listing_cents * settings.max_outbid_multiplier)
+
+        # Вариант 2: фиксированная надбавка (например +$5.00)
+        from_premium = lowest_listing_cents + settings.max_outbid_premium_cents
+
+        # Берём минимум из двух
+        ceiling = min(from_multiplier, from_premium)
+
+        logger.debug(
+            f"Price ceiling calculated: ${ceiling/100:.2f} "
+            f"(lowest: ${lowest_listing_cents/100:.2f}, "
+            f"multiplier: {settings.max_outbid_multiplier}x=${from_multiplier/100:.2f}, "
+            f"premium: +${settings.max_outbid_premium_cents/100:.2f}=${from_premium/100:.2f})"
+        )
+
+        return ceiling
+
     def should_outbid(
         self,
         our_order: BuyOrder,
-        competitor_price_cents: int
+        competitor_price_cents: int,
+        price_ceiling_cents: Optional[int] = None
     ) -> Tuple[bool, Optional[str]]:
         """
         Определить, нужно ли перебивать ордер
+
+        Args:
+            our_order: Наш ордер
+            competitor_price_cents: Цена конкурента в центах
+            price_ceiling_cents: Потолок цены (рассчитанный от lowest listing)
 
         Returns:
             (should_outbid, reason)
@@ -40,6 +74,10 @@ class OutbidLogic:
 
         if our_order.max_price_cents and new_price_cents > our_order.max_price_cents:
             return False, f"New price (${new_price_cents/100:.2f}) exceeds max price (${our_order.max_price_cents/100:.2f})"
+
+        # Проверка 4: Не превысим ли потолок (от lowest listing)?
+        if price_ceiling_cents and new_price_cents > price_ceiling_cents:
+            return False, f"Price ceiling reached: ${new_price_cents/100:.2f} > ${price_ceiling_cents/100:.2f}"
 
         return True, None
 

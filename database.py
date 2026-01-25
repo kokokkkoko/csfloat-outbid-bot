@@ -21,11 +21,26 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """Модель пользователя"""
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class Account(Base):
     """Модель аккаунта CSFloat"""
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Owner of account
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     api_key: Mapped[str] = mapped_column(String(500), nullable=False)
     proxy: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -48,6 +63,7 @@ class BuyOrder(Base):
 
     # Order details
     market_hash_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    icon_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Steam CDN icon hash
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)  # цена в центах
     quantity: Mapped[int] = mapped_column(Integer, default=1)
 

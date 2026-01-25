@@ -1,7 +1,7 @@
 """
 FastAPI Web Interface для CSFloat Bot
 """
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
@@ -12,10 +12,16 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from database import db, get_db, Account, BuyOrder, OutbidHistory
+from database import db, get_db, Account, BuyOrder, OutbidHistory, User
 from accounts import AccountManager
 from bot.manager import bot_manager
 from config import settings
+from auth import (
+    get_current_user, get_current_user_optional, require_admin,
+    authenticate_user, create_user, create_access_token, get_password_hash,
+    decode_token
+)
+from websocket_manager import ws_manager, WSEventType, create_ws_message
 
 
 # Pydantic модели для API
@@ -47,6 +53,19 @@ class SettingsUpdate(BaseModel):
     check_interval: Optional[int] = None
     outbid_step: Optional[float] = None
     max_outbids: Optional[int] = None
+    max_outbid_multiplier: Optional[float] = None
+    max_outbid_premium: Optional[float] = None  # в долларах, конвертируем в центы
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class UserRegister(BaseModel):
+    username: str
+    email: str
+    password: str
 
 
 # Создаем FastAPI приложение
@@ -88,6 +107,18 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Страница входа"""
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    """Страница регистрации"""
+    return templates.TemplateResponse("register.html", {"request": request})
+
+
 # === Bot Control API ===
 
 @app.post("/api/bot/start")
@@ -119,13 +150,137 @@ async def get_bot_status():
     return status
 
 
+# === Authentication API ===
+
+@app.post("/api/auth/login")
+async def login(
+    user_data: UserLogin,
+    session: AsyncSession = Depends(get_db)
+):
+    """Авторизация пользователя"""
+    user = await authenticate_user(session, user_data.username, user_data.password)
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled"
+        )
+
+    # Update last login
+    user.last_login = datetime.utcnow()
+    await session.commit()
+
+    # Create access token
+    access_token = create_access_token(data={"sub": user.username})
+
+    logger.info(f"User logged in: {user.username}")
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_admin": user.is_admin
+        }
+    }
+
+
+@app.post("/api/auth/register")
+async def register(
+    user_data: UserRegister,
+    session: AsyncSession = Depends(get_db)
+):
+    """Регистрация нового пользователя"""
+    if not settings.allow_registration:
+        raise HTTPException(
+            status_code=403,
+            detail="Registration is currently disabled"
+        )
+
+    # Validate username
+    if len(user_data.username) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be at least 3 characters"
+        )
+
+    if len(user_data.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 6 characters"
+        )
+
+    try:
+        user = await create_user(
+            session=session,
+            username=user_data.username,
+            email=user_data.email,
+            password=user_data.password,
+            is_admin=False
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Create access token
+    access_token = create_access_token(data={"sub": user.username})
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_admin": user.is_admin
+        }
+    }
+
+
+@app.get("/api/auth/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
+    """Получить информацию о текущем пользователе"""
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "is_admin": current_user.is_admin,
+        "created_at": current_user.created_at.isoformat()
+    }
+
+
+@app.post("/api/auth/logout")
+async def logout(current_user: User = Depends(get_current_user)):
+    """Выход пользователя"""
+    logger.info(f"User logged out: {current_user.username}")
+    return {"status": "success", "message": "Logged out successfully"}
+
+
 # === Accounts API ===
 
 @app.get("/api/accounts")
-async def get_accounts(session: AsyncSession = Depends(get_db)):
-    """Получить все аккаунты"""
+async def get_accounts(
+    session: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """Получить аккаунты (фильтрация по user_id если авторизован)"""
     manager = AccountManager(session)
-    accounts = await manager.get_all_accounts()
+
+    if current_user and not current_user.is_admin:
+        # Regular user sees only their accounts
+        accounts = await manager.get_accounts_by_user(current_user.id)
+    else:
+        # Admin or unauthenticated (for backward compatibility) sees all
+        accounts = await manager.get_all_accounts()
 
     return [
         {
@@ -136,7 +291,8 @@ async def get_accounts(session: AsyncSession = Depends(get_db)):
             "is_active": acc.is_active,
             "status": acc.status,
             "last_check": acc.last_check.isoformat() if acc.last_check else None,
-            "error_message": acc.error_message
+            "error_message": acc.error_message,
+            "user_id": acc.user_id
         }
         for acc in accounts
     ]
@@ -145,7 +301,8 @@ async def get_accounts(session: AsyncSession = Depends(get_db)):
 @app.post("/api/accounts")
 async def create_account(
     account_data: AccountCreate,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """Создать новый аккаунт"""
     try:
@@ -153,7 +310,8 @@ async def create_account(
         account = await manager.create_account(
             name=account_data.name,
             api_key=account_data.api_key,
-            proxy=account_data.proxy
+            proxy=account_data.proxy,
+            user_id=current_user.id if current_user else None
         )
 
         return {
@@ -307,6 +465,7 @@ async def sync_orders(
             # Определяем тип ордера и название предмета
             expression = cf_order.get('expression', '')
             market_hash_name_field = cf_order.get('market_hash_name', '')
+            icon_url = None  # Для иконки скина
 
             # Advanced ордера имеют expression с логикой (DefIndex ==, and, etc.)
             # Simple ордера имеют просто market_hash_name
@@ -370,15 +529,19 @@ async def sync_orders(
                                 listings = listings_response["listings"]
                                 logger.debug(f"Found {len(listings)} listings")
                                 if listings and len(listings) > 0:
-                                    # Берем market_hash_name из первого листинга
+                                    # Берем market_hash_name и icon_url из первого листинга
                                     first_listing = listings[0]
-                                    # Listing.item возвращает объект Item, у которого есть market_hash_name
-                                    if first_listing.item and first_listing.item.market_hash_name:
-                                        item_name = first_listing.item.market_hash_name
-                                        logger.info(f"Successfully fetched item name: {item_name}")
-                                        market_hash_name = item_name
+                                    # Listing.item возвращает объект Item, у которого есть market_hash_name и icon_url
+                                    if first_listing.item:
+                                        if first_listing.item.market_hash_name:
+                                            item_name = first_listing.item.market_hash_name
+                                            logger.info(f"Successfully fetched item name: {item_name}")
+                                            market_hash_name = item_name
+                                        if first_listing.item.icon_url:
+                                            icon_url = first_listing.item.icon_url
+                                            logger.info(f"Successfully fetched icon_url: {icon_url[:50]}...")
                                     else:
-                                        logger.warning(f"Listing found but no item/market_hash_name")
+                                        logger.warning(f"Listing found but no item data")
                                 else:
                                     logger.warning(f"No listings found for DefIndex={def_index}, PaintIndex={paint_index}")
                             else:
@@ -397,6 +560,24 @@ async def sync_orders(
                 def_index = None
                 paint_index = None
 
+                # Получаем icon_url для simple order
+                try:
+                    if market_hash_name and market_hash_name != 'Unknown':
+                        listings_response = await client.get_all_listings(
+                            market_hash_name=market_hash_name,
+                            limit=1,
+                            type_="buy_now"
+                        )
+                        if listings_response and "listings" in listings_response:
+                            listings = listings_response["listings"]
+                            if listings and len(listings) > 0:
+                                first_listing = listings[0]
+                                if first_listing.item and first_listing.item.icon_url:
+                                    icon_url = first_listing.item.icon_url
+                                    logger.info(f"Fetched icon_url for simple order: {icon_url[:50]}...")
+                except Exception as e:
+                    logger.debug(f"Could not fetch icon for {market_hash_name}: {e}")
+
             price_cents = cf_order.get('price', 0)
             quantity = cf_order.get('qty', 1)
 
@@ -414,6 +595,8 @@ async def sync_orders(
                 existing_order.def_index = def_index  # Обновляем DefIndex/PaintIndex
                 existing_order.paint_index = paint_index
                 existing_order.market_hash_name = market_hash_name  # Обновляем название
+                if icon_url:
+                    existing_order.icon_url = icon_url  # Обновляем иконку
                 existing_order.is_active = True
                 existing_order.updated_at = datetime.utcnow()
                 updated_count += 1
@@ -423,6 +606,7 @@ async def sync_orders(
                     account_id=account.id,
                     order_id=str(order_id),
                     market_hash_name=market_hash_name,
+                    icon_url=icon_url,  # Сохраняем иконку
                     price_cents=price_cents,
                     quantity=quantity,
                     order_type=order_type,  # Используем определенный тип
@@ -480,10 +664,22 @@ async def sync_orders(
 @app.get("/api/orders")
 async def get_orders(
     active_only: bool = False,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
-    """Получить все ордера"""
-    query = select(BuyOrder)
+    """Получить ордера (фильтрация по user_id если авторизован)"""
+    # Build query with optional user filtering
+    if current_user and not current_user.is_admin:
+        # Regular user: filter orders through their accounts
+        query = (
+            select(BuyOrder)
+            .join(Account, BuyOrder.account_id == Account.id)
+            .where(Account.user_id == current_user.id)
+        )
+    else:
+        # Admin or unauthenticated: see all orders
+        query = select(BuyOrder)
+
     if active_only:
         query = query.where(BuyOrder.is_active == True)
 
@@ -496,6 +692,7 @@ async def get_orders(
             "account_id": order.account_id,
             "order_id": order.order_id,
             "market_hash_name": order.market_hash_name,
+            "icon_url": order.icon_url,
             "price_cents": order.price_cents,
             "price_usd": order.price_cents / 100,
             "quantity": order.quantity,
@@ -579,14 +776,29 @@ async def delete_order(
 @app.get("/api/history")
 async def get_history(
     limit: int = 100,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
-    """Получить историю перебивов"""
-    result = await session.execute(
-        select(OutbidHistory)
-        .order_by(desc(OutbidHistory.timestamp))
-        .limit(limit)
-    )
+    """Получить историю перебивов (фильтрация по user_id если авторизован)"""
+    # Build query with optional user filtering
+    if current_user and not current_user.is_admin:
+        # Regular user: filter history through their accounts
+        query = (
+            select(OutbidHistory)
+            .join(Account, OutbidHistory.account_id == Account.id)
+            .where(Account.user_id == current_user.id)
+            .order_by(desc(OutbidHistory.timestamp))
+            .limit(limit)
+        )
+    else:
+        # Admin or unauthenticated: see all history
+        query = (
+            select(OutbidHistory)
+            .order_by(desc(OutbidHistory.timestamp))
+            .limit(limit)
+        )
+
+    result = await session.execute(query)
     history = result.scalars().all()
 
     return [
@@ -615,7 +827,10 @@ async def get_settings():
     return {
         "check_interval": settings.check_interval,
         "outbid_step": settings.outbid_step,
-        "max_outbids": settings.max_outbids
+        "max_outbids": settings.max_outbids,
+        "max_outbid_multiplier": settings.max_outbid_multiplier,
+        "max_outbid_premium": settings.max_outbid_premium_cents / 100,  # центы -> доллары
+        "admin_enabled": settings.admin_enabled
     }
 
 
@@ -636,6 +851,14 @@ async def update_settings(settings_data: SettingsUpdate):
         old_value = settings.max_outbids
         settings.max_outbids = settings_data.max_outbids
         logger.info(f"Updated max_outbids: {old_value} -> {settings.max_outbids}")
+    if settings_data.max_outbid_multiplier is not None:
+        old_value = settings.max_outbid_multiplier
+        settings.max_outbid_multiplier = settings_data.max_outbid_multiplier
+        logger.info(f"Updated max_outbid_multiplier: {old_value} -> {settings.max_outbid_multiplier}")
+    if settings_data.max_outbid_premium is not None:
+        old_value = settings.max_outbid_premium_cents
+        settings.max_outbid_premium_cents = int(settings_data.max_outbid_premium * 100)  # доллары -> центы
+        logger.info(f"Updated max_outbid_premium_cents: {old_value} -> {settings.max_outbid_premium_cents}")
 
     return {"status": "success"}
 
@@ -646,3 +869,229 @@ async def update_settings(settings_data: SettingsUpdate):
 async def health_check():
     """Health check endpoint"""
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+# === WebSocket ===
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time updates"""
+    # Try to get user_id from query parameter (token)
+    user_id = None
+    token = websocket.query_params.get("token")
+    if token:
+        try:
+            payload = decode_token(token)
+            if payload:
+                user_id = payload.get("user_id")
+        except Exception:
+            pass  # Continue without user_id
+
+    client_id = await ws_manager.connect(websocket, user_id)
+
+    try:
+        # Send welcome message with current status
+        await websocket.send_json(create_ws_message(
+            WSEventType.NOTIFICATION,
+            data={"level": "info", "connections": ws_manager.get_connection_count()},
+            message="Connected to WebSocket"
+        ))
+
+        # Send current bot status
+        status = await bot_manager.get_status()
+        await websocket.send_json(create_ws_message(
+            WSEventType.BOT_STATUS_CHANGED,
+            data=status
+        ))
+
+        # Listen for messages
+        while True:
+            try:
+                data = await websocket.receive_json()
+
+                # Handle ping
+                if data.get("type") == WSEventType.PING:
+                    await websocket.send_json(create_ws_message(WSEventType.PONG))
+
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"WebSocket error for {client_id}: {e}")
+                break
+
+    finally:
+        ws_manager.disconnect(client_id, user_id)
+
+
+@app.get("/api/ws/status")
+async def websocket_status():
+    """Get WebSocket connection statistics"""
+    return {
+        "active_connections": ws_manager.get_connection_count(),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+# === Admin Panel (conditionally enabled) ===
+
+if settings.admin_enabled:
+    logger.info("Admin panel ENABLED (ADMIN_ENABLED=true)")
+
+    @app.get("/admin", response_class=HTMLResponse)
+    async def admin_page(request: Request):
+        """Admin panel page"""
+        return templates.TemplateResponse("admin.html", {"request": request})
+
+    @app.get("/api/admin/stats")
+    async def get_admin_stats(
+        session: AsyncSession = Depends(get_db),
+        current_user: User = Depends(require_admin)
+    ):
+        """Get admin dashboard statistics"""
+        from datetime import timedelta
+
+        # Count users
+        result = await session.execute(select(User))
+        total_users = len(result.scalars().all())
+
+        # Count active accounts
+        result = await session.execute(
+            select(Account).where(Account.is_active == True)
+        )
+        active_accounts = len(result.scalars().all())
+
+        # Count active orders
+        result = await session.execute(
+            select(BuyOrder).where(BuyOrder.is_active == True)
+        )
+        active_orders = len(result.scalars().all())
+
+        # Count outbids in last 24 hours
+        yesterday = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            select(OutbidHistory).where(OutbidHistory.timestamp >= yesterday)
+        )
+        outbids_24h = len(result.scalars().all())
+
+        return {
+            "total_users": total_users,
+            "active_accounts": active_accounts,
+            "active_orders": active_orders,
+            "outbids_24h": outbids_24h
+        }
+
+    @app.get("/api/admin/users")
+    async def get_admin_users(
+        session: AsyncSession = Depends(get_db),
+        current_user: User = Depends(require_admin)
+    ):
+        """Get all users for admin panel"""
+        result = await session.execute(select(User).order_by(User.created_at))
+        users = result.scalars().all()
+
+        return [
+            {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "is_active": user.is_active,
+                "is_admin": user.is_admin,
+                "created_at": user.created_at.isoformat(),
+                "last_login": user.last_login.isoformat() if user.last_login else None
+            }
+            for user in users
+        ]
+
+    class AdminUserUpdate(BaseModel):
+        is_active: Optional[bool] = None
+        is_admin: Optional[bool] = None
+
+    @app.put("/api/admin/users/{user_id}")
+    async def update_admin_user(
+        user_id: int,
+        user_data: AdminUserUpdate,
+        session: AsyncSession = Depends(get_db),
+        current_user: User = Depends(require_admin)
+    ):
+        """Update user as admin"""
+        # Find user
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Prevent self-demotion
+        if user.id == current_user.id:
+            if user_data.is_admin == False:
+                raise HTTPException(status_code=400, detail="Cannot remove your own admin status")
+            if user_data.is_active == False:
+                raise HTTPException(status_code=400, detail="Cannot deactivate yourself")
+
+        # Update fields
+        if user_data.is_active is not None:
+            user.is_active = user_data.is_active
+        if user_data.is_admin is not None:
+            user.is_admin = user_data.is_admin
+
+        await session.commit()
+
+        return {"status": "success"}
+
+    # Simple in-memory log storage for admin panel
+    _admin_logs = []
+    MAX_LOGS = 500
+
+    def add_admin_log(level: str, message: str):
+        """Add a log entry for admin panel"""
+        global _admin_logs
+        _admin_logs.append({
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "level": level.upper(),
+            "message": message
+        })
+        # Keep only last MAX_LOGS entries
+        if len(_admin_logs) > MAX_LOGS:
+            _admin_logs = _admin_logs[-MAX_LOGS:]
+
+    # Hook into loguru for admin logs
+    def setup_admin_logging():
+        """Setup loguru to capture logs for admin panel"""
+        def admin_sink(message):
+            record = message.record
+            add_admin_log(record["level"].name, record["message"])
+
+        logger.add(admin_sink, format="{message}", level="DEBUG")
+
+    # Initialize admin logging
+    setup_admin_logging()
+
+    @app.get("/api/admin/logs")
+    async def get_admin_logs(
+        level: Optional[str] = None,
+        limit: int = 100,
+        current_user: User = Depends(require_admin)
+    ):
+        """Get system logs for admin panel"""
+        logs = _admin_logs.copy()
+
+        # Filter by level if specified
+        if level:
+            logs = [log for log in logs if log["level"].lower() == level.lower()]
+
+        # Return last N logs
+        return logs[-limit:]
+
+else:
+    logger.info("Admin panel DISABLED (ADMIN_ENABLED=false)")
+
+    # Return 404 for all admin routes when disabled
+    @app.get("/admin")
+    async def admin_disabled():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    @app.get("/api/admin/{path:path}")
+    async def admin_api_disabled(path: str):
+        raise HTTPException(status_code=404, detail="Not found")

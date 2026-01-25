@@ -13,7 +13,7 @@ if %errorlevel% neq 0 (
 )
 
 REM Create virtual environment
-echo [1/4] Creating virtual environment...
+echo [1/6] Creating virtual environment...
 if not exist venv (
     python -m venv venv
     echo OK: Virtual environment created
@@ -23,7 +23,7 @@ if not exist venv (
 
 REM Activate and install dependencies
 echo.
-echo [2/4] Installing dependencies...
+echo [2/6] Installing dependencies...
 call venv\Scripts\activate.bat
 python -m pip install --upgrade pip > nul 2>&1
 pip install -r requirements.txt
@@ -37,7 +37,7 @@ if %errorlevel% equ 0 (
 
 REM Create logs directory
 echo.
-echo [3/4] Creating logs directory...
+echo [3/6] Creating logs directory...
 if not exist logs (
     mkdir logs
     echo OK: Logs directory created
@@ -47,7 +47,7 @@ if not exist logs (
 
 REM Create .env file
 echo.
-echo [4/4] Checking configuration...
+echo [4/6] Checking configuration...
 if not exist .env (
     if exist .env.example (
         copy .env.example .env > nul
@@ -65,10 +65,32 @@ if not exist .env (
     echo INFO: .env file already exists
 )
 
+REM Run database migration
+echo.
+echo [5/6] Running database migrations...
+python migrate_db.py
+
+REM Create admin user
+echo.
+echo [6/6] Creating admin user...
+python create_admin.py --auto
+if %errorlevel% equ 0 (
+    echo OK: Admin user ready
+) else (
+    echo WARNING: Could not create admin user
+    echo You can create it manually with: create_admin.bat
+)
+
 echo.
 echo ========================================
 echo   Setup completed successfully!
 echo ========================================
+echo.
+echo Default admin credentials:
+echo   Username: admin
+echo   Password: admin123
+echo.
+echo IMPORTANT: Change the password after first login!
 echo.
 echo Now run start.bat to launch the bot
 echo.

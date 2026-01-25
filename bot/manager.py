@@ -14,6 +14,13 @@ from config import settings
 from .advanced_api import AdvancedOrderAPI
 from .outbid_logic import OutbidLogic
 
+# Import WebSocket broadcast functions (optional, fails gracefully if not available)
+try:
+    from websocket_manager import broadcast_bot_status, broadcast_order_outbid, broadcast_account_update
+    WS_ENABLED = True
+except ImportError:
+    WS_ENABLED = False
+
 
 class BotManager:
     """Главный менеджер бота для автоматического перебивания"""
@@ -38,6 +45,13 @@ class BotManager:
 
         logger.success("Bot started successfully")
 
+        # Broadcast status change via WebSocket
+        if WS_ENABLED:
+            try:
+                await broadcast_bot_status(True, settings.check_interval)
+            except Exception as e:
+                logger.debug(f"WebSocket broadcast failed: {e}")
+
     async def stop(self):
         """Остановить бота"""
         if not self.is_running:
@@ -61,6 +75,13 @@ class BotManager:
         self._advanced_apis.clear()
 
         logger.success("Bot stopped")
+
+        # Broadcast status change via WebSocket
+        if WS_ENABLED:
+            try:
+                await broadcast_bot_status(False, settings.check_interval)
+            except Exception as e:
+                logger.debug(f"WebSocket broadcast failed: {e}")
 
     async def _main_loop(self):
         """Главный цикл проверки и перебивания"""
@@ -182,13 +203,26 @@ class BotManager:
                 logger.debug(f"No competitor orders for {order.market_hash_name}")
                 return
 
-            # Проверяем, нужно ли перебивать
+            # Получаем lowest listing price для расчёта потолка
             outbid_logic = OutbidLogic(session)
-            should_outbid, reason = outbid_logic.should_outbid(order, competitor_price)
+            price_ceiling = None
+
+            lowest_listing_price = await self._get_lowest_listing_price(client, order)
+            if lowest_listing_price:
+                price_ceiling = outbid_logic.calculate_price_ceiling(lowest_listing_price)
+                logger.info(
+                    f"Price ceiling for {order.market_hash_name}: ${price_ceiling/100:.2f} "
+                    f"(lowest listing: ${lowest_listing_price/100:.2f})"
+                )
+            else:
+                logger.debug(f"No lowest listing found for {order.market_hash_name}, no price ceiling")
+
+            # Проверяем, нужно ли перебивать (с учётом потолка)
+            should_outbid, reason = outbid_logic.should_outbid(order, competitor_price, price_ceiling)
 
             if not should_outbid:
-                logger.debug(
-                    f"No outbid needed for {order.market_hash_name}: {reason}"
+                logger.info(
+                    f"No outbid for {order.market_hash_name}: {reason}"
                 )
                 return
 
@@ -237,9 +271,76 @@ class BotManager:
                     f"(new order: {new_order_id})"
                 )
 
+                # Broadcast outbid event via WebSocket
+                if WS_ENABLED:
+                    try:
+                        await broadcast_order_outbid(
+                            order_id=new_order_id,
+                            market_hash_name=order.market_hash_name,
+                            old_price=old_price,
+                            new_price=new_price,
+                            competitor_price=competitor_price
+                        )
+                    except Exception as ws_err:
+                        logger.debug(f"WebSocket broadcast failed: {ws_err}")
+
         except Exception as e:
             logger.error(f"Error in outbid process: {e}", exc_info=True)
             raise
+
+    async def _get_lowest_listing_price(
+        self,
+        client,
+        order: BuyOrder
+    ) -> Optional[int]:
+        """
+        Получить цену самого дешёвого листинга (sell order) для предмета
+
+        Используется для расчёта потолка цены перебивания.
+
+        Args:
+            client: CSFloat клиент
+            order: Ордер
+
+        Returns:
+            Цена в центах или None если листингов нет
+        """
+        try:
+            if order.order_type == "advanced":
+                # Для advanced orders - фильтруем по def_index, paint_index и float range
+                response = await client.get_all_listings(
+                    def_index=order.def_index,
+                    paint_index=order.paint_index,
+                    min_float=order.float_min,
+                    max_float=order.float_max,
+                    category=1,  # Только normal (не StatTrak)
+                    sort_by='lowest_price',
+                    limit=1,
+                    type_='buy_now'
+                )
+            else:
+                # Для simple orders - по market_hash_name
+                response = await client.get_all_listings(
+                    market_hash_name=order.market_hash_name,
+                    sort_by='lowest_price',
+                    limit=1,
+                    type_='buy_now'
+                )
+
+            if response and response.get('listings') and len(response['listings']) > 0:
+                lowest_listing = response['listings'][0]
+                lowest_price = lowest_listing.price
+                logger.debug(
+                    f"Lowest listing price for {order.market_hash_name}: ${lowest_price/100:.2f}"
+                )
+                return lowest_price
+
+            logger.debug(f"No sell listings found for {order.market_hash_name}")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error getting lowest listing price for {order.market_hash_name}: {e}")
+            return None
 
     async def _get_top_buy_price(
         self,

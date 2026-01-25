@@ -5,27 +5,205 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSFloat Outbid Bot</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Configure Tailwind for dark mode
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Apply theme before page renders to prevent flash -->
+    <script>
+        if (localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
     <style>
         .status-online { color: #10b981; }
         .status-error { color: #ef4444; }
         .status-idle { color: #6b7280; }
         .status-rate_limited { color: #f59e0b; }
+
+        /* Toast notifications */
+        #toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 400px;
+        }
+
+        .toast {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            animation: toast-slide-in 0.3s ease-out;
+            cursor: pointer;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .toast:hover {
+            transform: translateX(-5px);
+        }
+
+        .toast.removing {
+            animation: toast-slide-out 0.3s ease-in forwards;
+        }
+
+        .toast-icon {
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+
+        .toast-content {
+            flex: 1;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .toast-close {
+            font-size: 18px;
+            opacity: 0.7;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+
+        .toast-close:hover {
+            opacity: 1;
+        }
+
+        .toast-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+
+        .toast-error {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+        }
+
+        .toast-warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+        }
+
+        .toast-info {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+        }
+
+        @keyframes toast-slide-in {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes toast-slide-out {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+
+        /* Dark mode theme toggle */
+        .theme-toggle {
+            position: relative;
+            width: 56px;
+            height: 28px;
+            border-radius: 14px;
+            background: #e5e7eb;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .dark .theme-toggle {
+            background: #4b5563;
+        }
+
+        .theme-toggle-slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s, background-color 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .dark .theme-toggle-slider {
+            transform: translateX(28px);
+            background: #1f2937;
+        }
+
+        .theme-toggle-slider i {
+            font-size: 12px;
+            color: #f59e0b;
+        }
+
+        .dark .theme-toggle-slider i {
+            color: #fbbf24;
+        }
+
+        /* Dark mode transitions */
+        body, .bg-white, .bg-gray-50, .bg-gray-100 {
+            transition: background-color 0.3s, color 0.3s;
+        }
     </style>
 </head>
-<body class="bg-gray-100">
+<body class="bg-gray-100 dark:bg-gray-900 transition-colors duration-300">
+    <!-- Toast Notification Container -->
+    <div id="toast-container"></div>
+
     <div class="container mx-auto px-4 py-8">
         <!-- Header -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
             <div class="flex justify-between items-center">
                 <div>
-                    <h1 class="text-3xl font-bold text-gray-800">
-                        <i class="fas fa-robot text-blue-600"></i>
+                    <h1 class="text-3xl font-bold text-gray-800 dark:text-white">
+                        <i class="fas fa-robot text-blue-600 dark:text-blue-400"></i>
                         CSFloat Outbid Bot
                     </h1>
-                    <p class="text-gray-600 mt-1">Automatic buy order management</p>
+                    <p class="text-gray-600 dark:text-gray-400 mt-1">Automatic buy order management</p>
                 </div>
-                <div class="flex gap-4">
+                <div class="flex items-center gap-4">
+                    <!-- User Info -->
+                    <span id="userInfo" class="text-sm text-gray-600 dark:text-gray-400"></span>
+                    <!-- Admin Link (hidden by default) -->
+                    <a id="adminLink" href="/admin" class="hidden text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300" title="Admin Panel">
+                        <i class="fas fa-shield-alt"></i>
+                    </a>
+                    <!-- Logout Button -->
+                    <button id="logoutBtn" class="hidden text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400" title="Logout">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                    <!-- Theme Toggle -->
+                    <div id="themeToggle" class="theme-toggle" title="Toggle dark mode">
+                        <div class="theme-toggle-slider">
+                            <i class="fas fa-sun dark:hidden"></i>
+                            <i class="fas fa-moon hidden dark:block"></i>
+                        </div>
+                    </div>
                     <button id="startBot" class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition">
                         <i class="fas fa-play"></i> Start
                     </button>
@@ -36,56 +214,74 @@
             </div>
 
             <!-- Bot Status -->
-            <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+            <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                 <div class="grid grid-cols-4 gap-4">
                     <div>
-                        <p class="text-sm text-gray-600">Status</p>
-                        <p id="botStatus" class="font-semibold">Loading...</p>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Status</p>
+                        <p id="botStatus" class="font-semibold dark:text-white">Loading...</p>
                     </div>
                     <div>
-                        <p class="text-sm text-gray-600">Check Interval</p>
-                        <p id="checkInterval" class="font-semibold">-</p>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Check Interval</p>
+                        <p id="checkInterval" class="font-semibold dark:text-white">-</p>
                     </div>
                     <div>
-                        <p class="text-sm text-gray-600">Outbid Step</p>
-                        <p id="outbidStep" class="font-semibold">-</p>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Outbid Step</p>
+                        <p id="outbidStep" class="font-semibold dark:text-white">-</p>
                     </div>
                     <div>
-                        <p class="text-sm text-gray-600">Max Outbids</p>
-                        <p id="maxOutbids" class="font-semibold">-</p>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Max Outbids</p>
+                        <p id="maxOutbids" class="font-semibold dark:text-white">-</p>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- Settings -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-xl font-bold text-gray-800 mb-4">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-800 dark:text-white mb-4">
                 <i class="fas fa-cog"></i> Settings
             </h2>
             <div class="grid grid-cols-3 gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Check Interval (seconds)</label>
-                    <input type="number" id="settingInterval" class="w-full px-3 py-2 border border-gray-300 rounded-md" value="120">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Check Interval (seconds)</label>
+                    <input type="number" id="settingInterval" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="120">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Outbid Step ($)</label>
-                    <input type="number" step="0.01" id="settingStep" class="w-full px-3 py-2 border border-gray-300 rounded-md" value="0.01">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Outbid Step ($)</label>
+                    <input type="number" step="0.01" id="settingStep" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="0.01">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Max Outbids</label>
-                    <input type="number" id="settingMaxOutbids" class="w-full px-3 py-2 border border-gray-300 rounded-md" value="10">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Outbids</label>
+                    <input type="number" id="settingMaxOutbids" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="10">
                 </div>
             </div>
+
+            <!-- Price Ceiling Settings -->
+            <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3">
+                <i class="fas fa-dollar-sign"></i> Price Ceiling (based on lowest listing)
+            </h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Multiplier</label>
+                    <input type="number" step="0.05" id="settingMultiplier" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="1.20">
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">e.g. 1.20 = up to +20% above lowest sell price</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Premium ($)</label>
+                    <input type="number" step="0.50" id="settingPremium" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="5.00">
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Hard cap: don't bid more than $X above lowest</p>
+                </div>
+            </div>
+
             <button id="saveSettings" class="mt-4 bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition">
                 <i class="fas fa-save"></i> Save Settings
             </button>
         </div>
 
         <!-- Accounts -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold text-gray-800">
+                <h2 class="text-xl font-bold text-gray-800 dark:text-white">
                     <i class="fas fa-users"></i> Accounts
                 </h2>
                 <button id="addAccountBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition">
@@ -94,18 +290,18 @@
             </div>
 
             <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">API Key</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proxy</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Check</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">API Key</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Proxy</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Last Check</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="accountsTable" class="bg-white divide-y divide-gray-200">
+                    <tbody id="accountsTable" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                         <!-- Accounts will be loaded here -->
                     </tbody>
                 </table>
@@ -113,9 +309,9 @@
         </div>
 
         <!-- Active Orders -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold text-gray-800">
+                <h2 class="text-xl font-bold text-gray-800 dark:text-white">
                     <i class="fas fa-list"></i> Active Orders
                 </h2>
                 <button id="refreshOrders" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition">
@@ -124,19 +320,19 @@
             </div>
 
             <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Float Range</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Outbids</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Max Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Item</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Type</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Float Range</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Outbids</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Max Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="ordersTable" class="bg-white divide-y divide-gray-200">
+                    <tbody id="ordersTable" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                         <!-- Orders will be loaded here -->
                     </tbody>
                 </table>
@@ -144,23 +340,23 @@
         </div>
 
         <!-- Outbid History -->
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <h2 class="text-xl font-bold text-gray-800 mb-4">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-bold text-gray-800 dark:text-white mb-4">
                 <i class="fas fa-history"></i> Outbid History
             </h2>
 
             <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead class="bg-gray-50 dark:bg-gray-700">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Timestamp</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Old Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">New Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Competitor</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Timestamp</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Item</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Old Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">New Price</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Competitor</th>
                         </tr>
                     </thead>
-                    <tbody id="historyTable" class="bg-white divide-y divide-gray-200">
+                    <tbody id="historyTable" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                         <!-- History will be loaded here -->
                     </tbody>
                 </table>
@@ -169,21 +365,21 @@
     </div>
 
     <!-- Add Account Modal -->
-    <div id="addAccountModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <h3 class="text-lg font-bold mb-4">Add New Account</h3>
+    <div id="addAccountModal" class="hidden fixed inset-0 bg-gray-600 dark:bg-gray-900 bg-opacity-50 dark:bg-opacity-70 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border dark:border-gray-700 w-96 shadow-lg rounded-md bg-white dark:bg-gray-800">
+            <h3 class="text-lg font-bold mb-4 dark:text-white">Add New Account</h3>
             <div class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Name</label>
-                    <input type="text" id="newAccountName" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="My Account">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Name</label>
+                    <input type="text" id="newAccountName" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" placeholder="My Account">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">API Key</label>
-                    <input type="text" id="newAccountKey" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="Your CSFloat API key">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API Key</label>
+                    <input type="text" id="newAccountKey" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" placeholder="Your CSFloat API key">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Proxy (optional)</label>
-                    <input type="text" id="newAccountProxy" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="http://user:pass@ip:port">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Proxy (optional)</label>
+                    <input type="text" id="newAccountProxy" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" placeholder="http://user:pass@ip:port">
                 </div>
             </div>
             <div class="flex gap-2 mt-6">

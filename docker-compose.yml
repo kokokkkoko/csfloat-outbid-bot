@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: csfloat-bot
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Database
+      - DATABASE_URL=sqlite+aiosqlite:///./bot.db
+      # Bot settings
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-120}
+      - OUTBID_STEP=${OUTBID_STEP:-0.01}
+      - MAX_OUTBIDS=${MAX_OUTBIDS:-10}
+      # Authentication
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-in-production}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-true}
+      # Admin panel (disabled by default for shared deployments)
+      - ADMIN_ENABLED=${ADMIN_ENABLED:-false}
+      # Rate limiting
+      - MAX_REQUESTS_PER_MINUTE=${MAX_REQUESTS_PER_MINUTE:-60}
+      - MAX_REQUESTS_PER_ACCOUNT=${MAX_REQUESTS_PER_ACCOUNT:-30}
+    volumes:
+      # Persist database
+      - ./data:/app/data
+      - ./bot.db:/app/bot.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Watchtower for automatic updates
+  # watchtower:
+  #   image: containrrr/watchtower
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   environment:
+  #     - WATCHTOWER_CLEANUP=true
+  #     - WATCHTOWER_POLL_INTERVAL=86400

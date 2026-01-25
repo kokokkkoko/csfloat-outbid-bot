@@ -61,6 +61,13 @@ class AccountManager:
         )
         return list(result.scalars().all())
 
+    async def get_accounts_by_user(self, user_id: int) -> List[Account]:
+        """Получить аккаунты пользователя"""
+        result = await self.session.execute(
+            select(Account).where(Account.user_id == user_id)
+        )
+        return list(result.scalars().all())
+
     async def get_account(self, account_id: int) -> Optional[Account]:
         """Получить аккаунт по ID"""
         result = await self.session.execute(
@@ -79,7 +86,8 @@ class AccountManager:
         self,
         name: str,
         api_key: str,
-        proxy: Optional[str] = None
+        proxy: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> Account:
         """Создать новый аккаунт"""
         # Проверяем, что аккаунт с таким именем не существует
@@ -92,14 +100,15 @@ class AccountManager:
             api_key=api_key,
             proxy=proxy,
             is_active=True,
-            status="idle"
+            status="idle",
+            user_id=user_id
         )
 
         self.session.add(account)
         await self.session.commit()
         await self.session.refresh(account)
 
-        logger.info(f"Created account: {name} (ID: {account.id})")
+        logger.info(f"Created account: {name} (ID: {account.id}, user_id: {user_id})")
         return account
 
     async def update_account(
