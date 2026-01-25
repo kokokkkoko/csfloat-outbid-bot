@@ -10,8 +10,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Database
-      - DATABASE_URL=sqlite+aiosqlite:///./bot.db
+      # Database (stored in ./data folder)
+      - DATABASE_URL=sqlite+aiosqlite:///./data/bot.db
       # Bot settings
       - CHECK_INTERVAL=${CHECK_INTERVAL:-120}
       - OUTBID_STEP=${OUTBID_STEP:-0.01}
@@ -26,9 +26,8 @@ services:
       - MAX_REQUESTS_PER_MINUTE=${MAX_REQUESTS_PER_MINUTE:-60}
       - MAX_REQUESTS_PER_ACCOUNT=${MAX_REQUESTS_PER_ACCOUNT:-30}
     volumes:
-      # Persist database
+      # Persist database in data folder
       - ./data:/app/data
-      - ./bot.db:/app/bot.db
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
