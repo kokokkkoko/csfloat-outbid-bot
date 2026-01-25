@@ -10,6 +10,7 @@ from typing import Optional, List
 from datetime import datetime
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from loguru import logger
 
 from database import db, get_db, Account, BuyOrder, OutbidHistory, User
@@ -456,9 +457,12 @@ async def sync_orders(
             # Добавляем в список активных ID из CSFloat
             csfloat_order_ids.add(str(order_id))
 
-            # Проверяем, есть ли уже в БД
+            # Проверяем, есть ли уже в БД ДЛЯ ЭТОГО АККАУНТА
             result = await session.execute(
-                select(BuyOrder).where(BuyOrder.order_id == str(order_id))
+                select(BuyOrder).where(
+                    BuyOrder.order_id == str(order_id),
+                    BuyOrder.account_id == account.id
+                )
             )
             existing_order = result.scalar_one_or_none()
 
@@ -504,51 +508,62 @@ async def sync_orders(
                 # 1. Сначала проверяем, есть ли в ответе CSFloat
                 market_hash_name = market_hash_name_field if market_hash_name_field else None
 
-                # 2. Если нет, пробуем получить через API
+                # 2. Если нет, пробуем получить через API с retry
                 if not market_hash_name:
-                    market_hash_name = expression  # По умолчанию используем expression
-                    try:
-                        if def_index and paint_index:
-                            logger.info(f"Fetching item name for DefIndex={def_index}, PaintIndex={paint_index}, float=[{float_min}-{float_max}]")
-                            # Пробуем найти листинг с этими параметрами
-                            # category: 0 = any, 1 = normal, 2 = stattrak, 3 = souvenir
-                            # Фильтруем по float range, чтобы получить правильное качество (FT, MW, etc.)
-                            listings_response = await client.get_all_listings(
-                                def_index=def_index,
-                                paint_index=paint_index,
-                                category=1,  # Только normal (не StatTrak)
-                                min_float=float_min if float_min is not None else None,
-                                max_float=float_max if float_max is not None else None,
-                                limit=1,
-                                type_="buy_now"
-                            )
+                    # Создаем fallback название вместо сырого expression
+                    float_range = ""
+                    if float_min is not None and float_max is not None:
+                        float_range = f" (Float: {float_min:.2f}-{float_max:.2f})"
+                    elif float_min is not None:
+                        float_range = f" (Float: ≥{float_min:.2f})"
+                    elif float_max is not None:
+                        float_range = f" (Float: <{float_max:.2f})"
 
-                            logger.debug(f"Listings response: {listings_response}")
+                    market_hash_name = f"Advanced Order #{def_index or '?'}/{paint_index or '?'}{float_range}"
 
-                            if listings_response and "listings" in listings_response:
-                                listings = listings_response["listings"]
-                                logger.debug(f"Found {len(listings)} listings")
-                                if listings and len(listings) > 0:
-                                    # Берем market_hash_name и icon_url из первого листинга
-                                    first_listing = listings[0]
-                                    # Listing.item возвращает объект Item, у которого есть market_hash_name и icon_url
-                                    if first_listing.item:
-                                        if first_listing.item.market_hash_name:
-                                            item_name = first_listing.item.market_hash_name
-                                            logger.info(f"Successfully fetched item name: {item_name}")
-                                            market_hash_name = item_name
-                                        if first_listing.item.icon_url:
-                                            icon_url = first_listing.item.icon_url
-                                            logger.info(f"Successfully fetched icon_url: {icon_url[:50]}...")
-                                    else:
-                                        logger.warning(f"Listing found but no item data")
-                                else:
-                                    logger.warning(f"No listings found for DefIndex={def_index}, PaintIndex={paint_index}")
+                    # Пробуем получить настоящее название через API с retry
+                    import asyncio
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            if def_index and paint_index:
+                                logger.info(f"Fetching item name for DefIndex={def_index}, PaintIndex={paint_index} (attempt {attempt + 1}/{max_retries})")
+
+                                # Пробуем разные категории если не находим
+                                for category in [0, 1, 2, 3]:  # any, normal, stattrak, souvenir
+                                    listings_response = await client.get_all_listings(
+                                        def_index=def_index,
+                                        paint_index=paint_index,
+                                        category=category,
+                                        min_float=float_min,  # Важно: фильтруем по float для правильного wear
+                                        max_float=float_max,
+                                        limit=1,
+                                        type_="buy_now"
+                                    )
+
+                                    if listings_response and "listings" in listings_response:
+                                        listings = listings_response["listings"]
+                                        if listings and len(listings) > 0:
+                                            first_listing = listings[0]
+                                            if first_listing.item:
+                                                if first_listing.item.market_hash_name:
+                                                    item_name = first_listing.item.market_hash_name
+                                                    logger.info(f"Successfully fetched item name: {item_name}")
+                                                    market_hash_name = item_name
+                                                if first_listing.item.icon_url:
+                                                    icon_url = first_listing.item.icon_url
+                                                    logger.info(f"Successfully fetched icon_url: {icon_url[:50]}...")
+                                                break  # Нашли, выходим из цикла категорий
+
+                                if icon_url:  # Если получили данные - выходим из retry
+                                    break
+
+                        except Exception as e:
+                            logger.warning(f"Error fetching item name (attempt {attempt + 1}): {e}")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
                             else:
-                                logger.warning(f"Invalid response structure: {listings_response}")
-                    except Exception as e:
-                        logger.error(f"Error fetching item name for DefIndex={def_index}, PaintIndex={paint_index}: {e}", exc_info=True)
-                        # Оставляем expression как название
+                                logger.error(f"Failed to fetch item name after {max_retries} attempts")
                 else:
                     logger.info(f"Using market_hash_name from CSFloat response: {market_hash_name}")
             else:
@@ -618,8 +633,27 @@ async def sync_orders(
                     max_price_cents=price_cents * 2,  # Устанавливаем макс цену в 2 раза выше текущей
                     is_active=True
                 )
-                session.add(new_order)
-                synced_count += 1
+                try:
+                    session.add(new_order)
+                    await session.flush()  # Flush to catch IntegrityError immediately
+                    synced_count += 1
+                except IntegrityError:
+                    # Ордер уже существует (возможно, был создан другим запросом)
+                    await session.rollback()
+                    logger.warning(f"Order {order_id} already exists, updating instead")
+                    # Пробуем найти и обновить
+                    result = await session.execute(
+                        select(BuyOrder).where(BuyOrder.order_id == str(order_id))
+                    )
+                    existing = result.scalar_one_or_none()
+                    if existing:
+                        existing.price_cents = price_cents
+                        existing.quantity = quantity
+                        existing.is_active = True
+                        existing.updated_at = datetime.utcnow()
+                        if icon_url:
+                            existing.icon_url = icon_url
+                        updated_count += 1
 
         # Деактивируем ордера, которых больше нет на CSFloat
         # (например, выполненные или отмененные вручную)
