@@ -13,7 +13,7 @@ from database import Account
 
 
 class CSFloatClient(CSFloatClientBase):
-    """Обертка над CSFloatClient с исправленным DNS resolver"""
+    """Обертка над CSFloatClient с исправленным DNS resolver и SSL"""
 
     def __init__(self, api_key: str, proxy: str = None) -> None:
         self.API_KEY = api_key
@@ -23,20 +23,26 @@ class CSFloatClient(CSFloatClientBase):
             'Authorization': self.API_KEY
         }
 
-        # Используем ThreadedResolver вместо AsyncResolver
-        # чтобы избежать проблем с aiodns
+        # Используем ThreadedResolver и force_close для избежания SSL проблем
         if self.proxy:
             from aiohttp_socks.connector import ProxyConnector
-            self._connector = ProxyConnector.from_url(self.proxy, ttl_dns_cache=300)
+            self._connector = ProxyConnector.from_url(
+                self.proxy,
+                ttl_dns_cache=300,
+                force_close=True
+            )
         else:
             self._connector = aiohttp.TCPConnector(
-                resolver=aiohttp.ThreadedResolver(),  # Исправлено: используем ThreadedResolver
-                limit_per_host=50
+                resolver=aiohttp.ThreadedResolver(),
+                limit_per_host=50,
+                force_close=True,  # Важно: закрываем соединения после использования
+                enable_cleanup_closed=True
             )
 
         self._session = aiohttp.ClientSession(
             connector=self._connector,
-            headers=self._headers
+            headers=self._headers,
+            timeout=aiohttp.ClientTimeout(total=30)
         )
 
         logger.debug(f"CSFloatClient initialized (proxy: {self.proxy is not None})")
@@ -216,7 +222,12 @@ class AccountManager:
             await self.update_account_status(account.id, "error", error_msg)
             return False, error_msg
 
-    def close_all_clients(self):
+    async def close_all_clients(self):
         """Закрыть все клиенты"""
+        for client in self._clients.values():
+            try:
+                await client.close()
+            except Exception as e:
+                logger.warning(f"Error closing client: {e}")
         self._clients.clear()
         logger.info("All CSFloat clients closed")
