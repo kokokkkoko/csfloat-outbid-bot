@@ -1,10 +1,12 @@
 """
 FastAPI Web Interface для CSFloat Bot
 """
+import os
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -80,6 +82,18 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 templates = Jinja2Templates(directory="web/templates")
 
+# Проверяем наличие React build и подключаем его
+REACT_BUILD_PATH = Path("frontend/dist")
+REACT_INDEX_PATH = REACT_BUILD_PATH / "index.html"
+USE_REACT_SPA = REACT_BUILD_PATH.exists() and REACT_INDEX_PATH.exists()
+
+if USE_REACT_SPA:
+    # Монтируем статические файлы React (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=str(REACT_BUILD_PATH / "assets")), name="react-assets")
+    logger.info(f"React SPA enabled from {REACT_BUILD_PATH}")
+else:
+    logger.info("React build not found, using Jinja2 templates")
+
 
 # === Startup/Shutdown Events ===
 
@@ -127,22 +141,29 @@ async def shutdown_event():
 
 # === Web Pages ===
 
+def serve_react_or_template(request: Request, template_name: str):
+    """Отдаёт React SPA если билд есть, иначе Jinja2 шаблон"""
+    if USE_REACT_SPA:
+        return FileResponse(str(REACT_INDEX_PATH))
+    return templates.TemplateResponse(template_name, {"request": request})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Главная страница"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return serve_react_or_template(request, "index.html")
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """Страница входа"""
-    return templates.TemplateResponse("login.html", {"request": request})
+    return serve_react_or_template(request, "login.html")
 
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
     """Страница регистрации"""
-    return templates.TemplateResponse("register.html", {"request": request})
+    return serve_react_or_template(request, "register.html")
 
 
 # === Bot Control API ===
@@ -1201,3 +1222,23 @@ else:
     @app.get("/api/admin/{path:path}")
     async def admin_api_disabled(path: str):
         raise HTTPException(status_code=404, detail="Not found")
+
+
+# === SPA Catch-All Route (должен быть последним!) ===
+# Обрабатывает все остальные маршруты для React Router
+
+if USE_REACT_SPA:
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        """Catch-all route для React SPA (обрабатывает client-side routing)"""
+        # Не обрабатываем API и WebSocket запросы
+        if full_path.startswith(("api/", "ws", "static/", "assets/", "health")):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Проверяем, есть ли файл в корне React build (vite.svg, favicon.ico и т.д.)
+        static_file = REACT_BUILD_PATH / full_path
+        if static_file.exists() and static_file.is_file():
+            return FileResponse(str(static_file))
+
+        # Отдаём React index.html для всех остальных маршрутов
+        return FileResponse(str(REACT_INDEX_PATH))

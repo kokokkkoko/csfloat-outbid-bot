@@ -16,9 +16,10 @@ from .advanced_api import AdvancedOrderAPI
 from .outbid_logic import OutbidLogic
 
 
-async def rate_limit_delay(min_delay: float = 1.0, max_delay: float = 3.0):
+async def rate_limit_delay(min_delay: float = 2.0, max_delay: float = 5.0):
     """Add random delay between API requests to avoid rate limiting"""
     delay = random.uniform(min_delay, max_delay)
+    logger.debug(f"Rate limit delay: {delay:.1f}s")
     await asyncio.sleep(delay)
 
 # Import WebSocket broadcast functions (optional, fails gracefully if not available)
@@ -117,13 +118,18 @@ class BotManager:
 
                 logger.info(f"Checking {len(accounts)} active accounts...")
 
-                # Проверяем каждый аккаунт параллельно
-                tasks = [
-                    self._check_account(session, account)
-                    for account in accounts
-                ]
+                # Проверяем каждый аккаунт ПОСЛЕДОВАТЕЛЬНО с задержками
+                # (параллельная проверка вызывает rate limiting)
+                for idx, account in enumerate(accounts, 1):
+                    try:
+                        # Cooldown между аккаунтами (кроме первого)
+                        if idx > 1:
+                            logger.info(f"Cooldown before checking account {idx}/{len(accounts)}...")
+                            await rate_limit_delay(10.0, 15.0)
 
-                await asyncio.gather(*tasks, return_exceptions=True)
+                        await self._check_account(session, account)
+                    except Exception as e:
+                        logger.error(f"Error checking account {account.name}: {e}", exc_info=True)
 
             except Exception as e:
                 logger.error(f"Error checking accounts: {e}", exc_info=True)
@@ -152,11 +158,16 @@ class BotManager:
 
             logger.info(f"Found {len(orders)} active orders for {account.name}")
 
-            # Проверяем каждый ордер
-            for order in orders:
+            # Проверяем каждый ордер с задержкой между проверками
+            for idx, order in enumerate(orders, 1):
                 try:
+                    # Cooldown между проверками ордеров (кроме первого)
+                    if idx > 1:
+                        logger.debug(f"Cooldown before checking order {idx}/{len(orders)}...")
+                        await rate_limit_delay(5.0, 10.0)
+
                     logger.info(
-                        f"Checking order {order.order_id} ({order.order_type}): "
+                        f"[{idx}/{len(orders)}] Checking order {order.order_id} ({order.order_type}): "
                         f"{order.market_hash_name} @ ${order.price_cents/100:.2f}"
                     )
                     await self._check_and_outbid_order(session, account, client, order)
@@ -504,7 +515,7 @@ class BotManager:
                     category=1,  # Только normal (не StatTrak)
                     min_float=order.float_min if order.float_min is not None else None,
                     max_float=order.float_max if order.float_max is not None else None,
-                    limit=50
+                    limit=20  # Reduced from 50 to avoid rate limiting
                 )
 
             # Проверяем есть ли листинги
@@ -528,12 +539,12 @@ class BotManager:
                 # и их buy orders могут пересекаться с нашим диапазоном.
                 if order.order_type == "advanced":
                     logger.info("Trying to find ANY listings of this skin (without float filter)...")
-                    await rate_limit_delay(1.0, 2.0)  # Rate limit before fallback
+                    await rate_limit_delay(3.0, 5.0)  # Longer delay before fallback
                     listings_response = await client.get_all_listings(
                         def_index=order.def_index,
                         paint_index=order.paint_index,
                         category=1,
-                        limit=50
+                        limit=5  # Reduced to avoid rate limiting
                     )
                     if listings_response and "listings" in listings_response:
                         listings = listings_response["listings"]
@@ -546,10 +557,10 @@ class BotManager:
                 # Fallback 2: по market_hash_name
                 if not listings:
                     logger.info("Trying to find listings by market_hash_name...")
-                    await rate_limit_delay(1.0, 2.0)  # Rate limit before fallback
+                    await rate_limit_delay(3.0, 5.0)  # Longer delay before fallback
                     listings_response = await client.get_all_listings(
                         market_hash_name=order.market_hash_name,
-                        limit=50
+                        limit=5  # Reduced to avoid rate limiting
                     )
                     if listings_response and "listings" in listings_response:
                         listings = listings_response["listings"]
@@ -584,8 +595,8 @@ class BotManager:
                 )
 
                 try:
-                    # Rate limit delay between buy order requests
-                    await rate_limit_delay(0.5, 1.5)
+                    # Rate limit delay between buy order requests (increased)
+                    await rate_limit_delay(3.0, 6.0)
 
                     buy_orders = await client.get_buy_orders(
                         listing_id=listing_id,

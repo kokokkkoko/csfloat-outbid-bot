@@ -29,17 +29,36 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-REM Start the bot
-echo [*] Starting the bot...
+REM Check if frontend is built
+if not exist frontend\dist (
+    echo [*] Frontend not built. Building React SPA...
+    cd frontend
+    call npm install
+    call npm run build
+    cd ..
+    if not exist frontend\dist (
+        echo WARNING: Frontend build failed!
+        echo Falling back to legacy templates...
+    ) else (
+        echo [+] Frontend built successfully!
+    )
+) else (
+    echo [+] React SPA found in frontend\dist
+)
+
+REM Start the backend
+echo [*] Starting FastAPI server...
 echo.
 echo ========================================
-echo   Bot is running!
-echo   Web interface: http://localhost:8000
-echo   Login page:    http://localhost:8000/login
-echo   Admin panel:   http://localhost:8000/admin
+echo   CSFloat Bot is running!
+echo   Open: http://localhost:8000
 echo   Press Ctrl+C to stop
 echo ========================================
 echo.
+
+REM Start frontend dev server in background (optional)
+REM Uncomment the next line to run frontend in dev mode
+REM start /B cmd /c "cd frontend && npm run dev"
 
 python main.py
 
