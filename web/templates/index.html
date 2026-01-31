@@ -6,13 +6,11 @@
     <title>CSFloat Outbid Bot</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        // Configure Tailwind for dark mode
         tailwind.config = {
             darkMode: 'class',
         }
     </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Apply theme before page renders to prevent flash -->
     <script>
         if (localStorage.getItem('theme') === 'dark' ||
             (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -20,10 +18,7 @@
         }
     </script>
     <style>
-        .status-online { color: #10b981; }
-        .status-error { color: #ef4444; }
-        .status-idle { color: #6b7280; }
-        .status-rate_limited { color: #f59e0b; }
+        * { transition: background-color 0.2s, border-color 0.2s, color 0.2s; }
 
         /* Toast notifications */
         #toast-container {
@@ -34,361 +29,486 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
-            max-width: 400px;
+            max-width: 380px;
         }
-
         .toast {
             display: flex;
             align-items: center;
             gap: 12px;
-            padding: 16px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            animation: toast-slide-in 0.3s ease-out;
+            padding: 14px 18px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            animation: toast-in 0.3s ease-out;
             cursor: pointer;
-            transition: transform 0.2s, opacity 0.2s;
+            backdrop-filter: blur(8px);
         }
+        .toast.removing { animation: toast-out 0.3s ease-in forwards; }
+        .toast-icon { font-size: 18px; flex-shrink: 0; }
+        .toast-content { flex: 1; font-size: 14px; line-height: 1.4; }
+        .toast-close { opacity: 0.6; cursor: pointer; padding: 0 4px; }
+        .toast-close:hover { opacity: 1; }
+        .toast-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .toast-error { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .toast-warning { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+        .toast-info { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; }
+        @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes toast-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
 
-        .toast:hover {
-            transform: translateX(-5px);
-        }
-
-        .toast.removing {
-            animation: toast-slide-out 0.3s ease-in forwards;
-        }
-
-        .toast-icon {
-            font-size: 20px;
-            flex-shrink: 0;
-        }
-
-        .toast-content {
-            flex: 1;
-            font-size: 14px;
-            line-height: 1.4;
-        }
-
-        .toast-close {
-            font-size: 18px;
-            opacity: 0.7;
-            cursor: pointer;
-            padding: 0 4px;
-        }
-
-        .toast-close:hover {
-            opacity: 1;
-        }
-
-        .toast-success {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-        }
-
-        .toast-error {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            color: white;
-        }
-
-        .toast-warning {
-            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-            color: white;
-        }
-
-        .toast-info {
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: white;
-        }
-
-        @keyframes toast-slide-in {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        @keyframes toast-slide-out {
-            from {
-                transform: translateX(0);
-                opacity: 1;
-            }
-            to {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-        }
-
-        /* Dark mode theme toggle */
-        .theme-toggle {
-            position: relative;
-            width: 56px;
-            height: 28px;
-            border-radius: 14px;
-            background: #e5e7eb;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        .dark .theme-toggle {
-            background: #4b5563;
-        }
-
-        .theme-toggle-slider {
+        /* Tabs */
+        .tab-btn { position: relative; }
+        .tab-btn.active::after {
+            content: '';
             position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
+            bottom: -1px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            border-radius: 2px;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Status indicator */
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-dot.running { background: #10b981; box-shadow: 0 0 8px #10b981; }
+        .status-dot.stopped { background: #6b7280; }
+
+        /* Cards */
+        .card {
             background: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.3s, background-color 0.3s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            border-radius: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border: 1px solid #e5e7eb;
         }
-
-        .dark .theme-toggle-slider {
-            transform: translateX(28px);
+        .dark .card {
             background: #1f2937;
+            border-color: #374151;
         }
 
-        .theme-toggle-slider i {
-            font-size: 12px;
-            color: #f59e0b;
+        /* Input styling */
+        .input {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
+            background: white;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .dark .input {
+            background: #374151;
+            border-color: #4b5563;
+            color: white;
+        }
+        .dark .input:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
         }
 
-        .dark .theme-toggle-slider i {
-            color: #fbbf24;
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 500;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
         }
+        .btn-primary { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; }
+        .btn-primary:hover { box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); transform: translateY(-1px); }
+        .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .btn-success:hover { box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); transform: translateY(-1px); }
+        .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .btn-danger:hover { box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); transform: translateY(-1px); }
+        .btn-ghost {
+            background: transparent;
+            color: #6b7280;
+            border: 1px solid #e5e7eb;
+        }
+        .btn-ghost:hover { background: #f3f4f6; }
+        .dark .btn-ghost { color: #9ca3af; border-color: #4b5563; }
+        .dark .btn-ghost:hover { background: #374151; }
 
-        /* Dark mode transitions */
-        body, .bg-white, .bg-gray-50, .bg-gray-100 {
-            transition: background-color 0.3s, color 0.3s;
+        /* Table */
+        .table-row:hover { background: #f9fafb; }
+        .dark .table-row:hover { background: #374151; }
+
+        /* Modal */
+        .modal-backdrop {
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
         }
+        .modal-content {
+            animation: modalIn 0.2s ease;
+        }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
     </style>
 </head>
-<body class="bg-gray-100 dark:bg-gray-900 transition-colors duration-300">
-    <!-- Toast Notification Container -->
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
     <div id="toast-container"></div>
 
-    <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-            <div class="flex justify-between items-center">
-                <div>
-                    <h1 class="text-3xl font-bold text-gray-800 dark:text-white">
-                        <i class="fas fa-robot text-blue-600 dark:text-blue-400"></i>
-                        CSFloat Outbid Bot
-                    </h1>
-                    <p class="text-gray-600 dark:text-gray-400 mt-1">Automatic buy order management</p>
-                </div>
+    <!-- Header -->
+    <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo & Status -->
                 <div class="flex items-center gap-4">
-                    <!-- User Info -->
-                    <span id="userInfo" class="text-sm text-gray-600 dark:text-gray-400"></span>
-                    <!-- Admin Link (hidden by default) -->
-                    <a id="adminLink" href="/admin" class="hidden text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300" title="Admin Panel">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                            <i class="fas fa-robot text-white text-sm"></i>
+                        </div>
+                        <span class="font-semibold text-gray-900 dark:text-white hidden sm:block">CSFloat Bot</span>
+                    </div>
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-100 dark:bg-gray-700">
+                        <div id="statusDot" class="status-dot stopped"></div>
+                        <span id="botStatus" class="text-sm text-gray-600 dark:text-gray-300">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Right side -->
+                <div class="flex items-center gap-3">
+                    <span id="userInfo" class="text-sm text-gray-500 dark:text-gray-400 hidden sm:block"></span>
+                    <a id="adminLink" href="/admin" class="hidden text-gray-500 hover:text-purple-600 dark:text-gray-400 dark:hover:text-purple-400" title="Admin">
                         <i class="fas fa-shield-alt"></i>
                     </a>
-                    <!-- Logout Button -->
-                    <button id="logoutBtn" class="hidden text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400" title="Logout">
+
+                    <!-- Theme Toggle -->
+                    <button id="themeToggle" class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700" title="Toggle theme">
+                        <i class="fas fa-sun dark:hidden"></i>
+                        <i class="fas fa-moon hidden dark:block"></i>
+                    </button>
+
+                    <button id="logoutBtn" class="hidden w-9 h-9 rounded-lg flex items-center justify-center text-gray-500 hover:text-red-600 hover:bg-red-50 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-900/20" title="Logout">
                         <i class="fas fa-sign-out-alt"></i>
                     </button>
-                    <!-- Theme Toggle -->
-                    <div id="themeToggle" class="theme-toggle" title="Toggle dark mode">
-                        <div class="theme-toggle-slider">
-                            <i class="fas fa-sun dark:hidden"></i>
-                            <i class="fas fa-moon hidden dark:block"></i>
-                        </div>
-                    </div>
-                    <button id="startBot" class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition">
-                        <i class="fas fa-play"></i> Start
-                    </button>
-                    <button id="stopBot" class="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg transition">
-                        <i class="fas fa-stop"></i> Stop
-                    </button>
-                </div>
-            </div>
 
-            <!-- Bot Status -->
-            <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                <div class="grid grid-cols-4 gap-4">
-                    <div>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">Status</p>
-                        <p id="botStatus" class="font-semibold dark:text-white">Loading...</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">Check Interval</p>
-                        <p id="checkInterval" class="font-semibold dark:text-white">-</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">Outbid Step</p>
-                        <p id="outbidStep" class="font-semibold dark:text-white">-</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">Max Outbids</p>
-                        <p id="maxOutbids" class="font-semibold dark:text-white">-</p>
+                    <!-- Bot Controls -->
+                    <div class="flex items-center gap-2 ml-2 pl-4 border-l border-gray-200 dark:border-gray-700">
+                        <button id="startBot" class="btn btn-success text-sm py-2 px-4">
+                            <i class="fas fa-play text-xs"></i>
+                            <span class="hidden sm:inline">Start</span>
+                        </button>
+                        <button id="stopBot" class="btn btn-danger text-sm py-2 px-4">
+                            <i class="fas fa-stop text-xs"></i>
+                            <span class="hidden sm:inline">Stop</span>
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
+    </header>
 
-        <!-- Settings -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-xl font-bold text-gray-800 dark:text-white mb-4">
-                <i class="fas fa-cog"></i> Settings
-            </h2>
-            <div class="grid grid-cols-3 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Check Interval (seconds)</label>
-                    <input type="number" id="settingInterval" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="120">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Outbid Step ($)</label>
-                    <input type="number" step="0.01" id="settingStep" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="0.01">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Outbids</label>
-                    <input type="number" id="settingMaxOutbids" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="10">
-                </div>
-            </div>
-
-            <!-- Price Ceiling Settings -->
-            <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-300 mt-6 mb-3">
-                <i class="fas fa-dollar-sign"></i> Price Ceiling (based on lowest listing)
-            </h3>
-            <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Multiplier</label>
-                    <input type="number" step="0.05" id="settingMultiplier" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="1.20">
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">e.g. 1.20 = up to +20% above lowest sell price</p>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Premium ($)</label>
-                    <input type="number" step="0.50" id="settingPremium" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" value="5.00">
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Hard cap: don't bid more than $X above lowest</p>
-                </div>
-            </div>
-
-            <button id="saveSettings" class="mt-4 bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition">
-                <i class="fas fa-save"></i> Save Settings
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        <!-- Tabs -->
+        <div class="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 mb-6">
+            <button class="tab-btn active px-4 py-3 text-sm font-medium text-blue-600 dark:text-blue-400" data-tab="dashboard">
+                <i class="fas fa-chart-line mr-2"></i>Dashboard
+            </button>
+            <button class="tab-btn px-4 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="accounts">
+                <i class="fas fa-user-circle mr-2"></i>Accounts
+            </button>
+            <button class="tab-btn px-4 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="orders">
+                <i class="fas fa-shopping-cart mr-2"></i>Orders
+            </button>
+            <button class="tab-btn px-4 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="history">
+                <i class="fas fa-history mr-2"></i>History
+            </button>
+            <button class="tab-btn px-4 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300" data-tab="settings">
+                <i class="fas fa-cog mr-2"></i>Settings
             </button>
         </div>
 
-        <!-- Accounts -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold text-gray-800 dark:text-white">
-                    <i class="fas fa-users"></i> Accounts
-                </h2>
-                <button id="addAccountBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition">
-                    <i class="fas fa-plus"></i> Add Account
+        <!-- Dashboard Tab -->
+        <div id="tab-dashboard" class="tab-content active">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="card p-5">
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Check Interval</div>
+                    <div id="checkInterval" class="text-2xl font-semibold text-gray-900 dark:text-white">-</div>
+                </div>
+                <div class="card p-5">
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Outbid Step</div>
+                    <div id="outbidStep" class="text-2xl font-semibold text-gray-900 dark:text-white">-</div>
+                </div>
+                <div class="card p-5">
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Max Outbids</div>
+                    <div id="maxOutbids" class="text-2xl font-semibold text-gray-900 dark:text-white">-</div>
+                </div>
+                <div class="card p-5">
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Active Orders</div>
+                    <div id="totalOrders" class="text-2xl font-semibold text-gray-900 dark:text-white">0</div>
+                </div>
+            </div>
+
+            <!-- Quick History -->
+            <div class="card">
+                <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+                    <h3 class="font-medium text-gray-900 dark:text-white">Recent Activity</h3>
+                </div>
+                <div class="p-4">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                <th class="pb-3">Time</th>
+                                <th class="pb-3">Item</th>
+                                <th class="pb-3">Old</th>
+                                <th class="pb-3">New</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recentActivity" class="text-sm">
+                            <tr><td colspan="4" class="py-8 text-center text-gray-400">No recent activity</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Accounts Tab -->
+        <div id="tab-accounts" class="tab-content">
+            <div class="card">
+                <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+                    <h3 class="font-medium text-gray-900 dark:text-white">CSFloat Accounts</h3>
+                    <button id="addAccountBtn" class="btn btn-primary text-sm py-2">
+                        <i class="fas fa-plus text-xs"></i> Add Account
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">
+                                <th class="px-4 py-3">Name</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3">Proxy</th>
+                                <th class="px-4 py-3">Last Check</th>
+                                <th class="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="accountsTable" class="text-sm">
+                            <tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No accounts yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orders Tab -->
+        <div id="tab-orders" class="tab-content">
+            <div class="card">
+                <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+                    <h3 class="font-medium text-gray-900 dark:text-white">Active Buy Orders</h3>
+                    <button id="refreshOrders" class="btn btn-ghost text-sm py-2">
+                        <i class="fas fa-sync text-xs"></i> Sync Orders
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">
+                                <th class="px-4 py-3">Item</th>
+                                <th class="px-4 py-3">Price</th>
+                                <th class="px-4 py-3">Type</th>
+                                <th class="px-4 py-3">Float Range</th>
+                                <th class="px-4 py-3">Outbids</th>
+                                <th class="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ordersTable" class="text-sm">
+                            <tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">No active orders</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="tab-history" class="tab-content">
+            <div class="card">
+                <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+                    <h3 class="font-medium text-gray-900 dark:text-white">Outbid History</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">
+                                <th class="px-4 py-3">Time</th>
+                                <th class="px-4 py-3">Item</th>
+                                <th class="px-4 py-3">Old Price</th>
+                                <th class="px-4 py-3">New Price</th>
+                                <th class="px-4 py-3">Competitor</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTable" class="text-sm">
+                            <tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No history yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div id="tab-settings" class="tab-content">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Bot Settings -->
+                <div class="card">
+                    <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+                        <h3 class="font-medium text-gray-900 dark:text-white">Bot Settings</h3>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Check Interval (seconds)</label>
+                            <input type="number" id="settingInterval" class="input" value="120" min="60">
+                            <p class="text-xs text-gray-400 mt-1">Minimum 60 seconds recommended</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Outbid Step ($)</label>
+                            <input type="number" step="0.01" id="settingStep" class="input" value="0.01">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Outbids per Order</label>
+                            <input type="number" id="settingMaxOutbids" class="input" value="10">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Price Ceiling -->
+                <div class="card">
+                    <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+                        <h3 class="font-medium text-gray-900 dark:text-white">Price Ceiling</h3>
+                        <p class="text-xs text-gray-400 mt-1">Limits based on lowest listing price</p>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Multiplier</label>
+                            <input type="number" step="0.05" id="settingMultiplier" class="input" value="1.20">
+                            <p class="text-xs text-gray-400 mt-1">1.20 = up to 20% above lowest sell price</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Max Premium ($)</label>
+                            <input type="number" step="0.50" id="settingPremium" class="input" value="5.00">
+                            <p class="text-xs text-gray-400 mt-1">Hard cap above lowest listing</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <button id="saveSettings" class="btn btn-primary">
+                    <i class="fas fa-save"></i> Save Settings
                 </button>
             </div>
-
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead class="bg-gray-50 dark:bg-gray-700">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Name</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">API Key</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Proxy</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Last Check</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="accountsTable" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                        <!-- Accounts will be loaded here -->
-                    </tbody>
-                </table>
-            </div>
         </div>
-
-        <!-- Active Orders -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold text-gray-800 dark:text-white">
-                    <i class="fas fa-list"></i> Active Orders
-                </h2>
-                <button id="refreshOrders" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition">
-                    <i class="fas fa-sync"></i> Refresh
-                </button>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead class="bg-gray-50 dark:bg-gray-700">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Item</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Type</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Float Range</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Outbids</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Max Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ordersTable" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                        <!-- Orders will be loaded here -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Outbid History -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <h2 class="text-xl font-bold text-gray-800 dark:text-white mb-4">
-                <i class="fas fa-history"></i> Outbid History
-            </h2>
-
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead class="bg-gray-50 dark:bg-gray-700">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Timestamp</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Item</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Old Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">New Price</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Competitor</th>
-                        </tr>
-                    </thead>
-                    <tbody id="historyTable" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                        <!-- History will be loaded here -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+    </main>
 
     <!-- Add Account Modal -->
-    <div id="addAccountModal" class="hidden fixed inset-0 bg-gray-600 dark:bg-gray-900 bg-opacity-50 dark:bg-opacity-70 overflow-y-auto h-full w-full z-50">
-        <div class="relative top-20 mx-auto p-5 border dark:border-gray-700 w-96 shadow-lg rounded-md bg-white dark:bg-gray-800">
-            <h3 class="text-lg font-bold mb-4 dark:text-white">Add New Account</h3>
-            <div class="space-y-4">
+    <div id="addAccountModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="modal-backdrop absolute inset-0" onclick="document.getElementById('addAccountModal').classList.add('hidden')"></div>
+        <div class="modal-content card w-full max-w-md relative z-10">
+            <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+                <h3 class="font-medium text-gray-900 dark:text-white">Add CSFloat Account</h3>
+            </div>
+            <div class="p-4 space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Name</label>
-                    <input type="text" id="newAccountName" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" placeholder="My Account">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Account Name</label>
+                    <input type="text" id="newAccountName" class="input" placeholder="My Account">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API Key</label>
-                    <input type="text" id="newAccountKey" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" placeholder="Your CSFloat API key">
+                    <input type="text" id="newAccountKey" class="input" placeholder="Your CSFloat API key">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Proxy (optional)</label>
-                    <input type="text" id="newAccountProxy" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md" placeholder="http://user:pass@ip:port">
+                    <input type="text" id="newAccountProxy" class="input" placeholder="socks5://user:pass@ip:port">
                 </div>
             </div>
-            <div class="flex gap-2 mt-6">
-                <button id="saveAccount" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition">Save</button>
-                <button id="cancelAccount" class="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition">Cancel</button>
+            <div class="p-4 border-t border-gray-100 dark:border-gray-700 flex gap-3">
+                <button id="saveAccount" class="btn btn-primary flex-1">Save</button>
+                <button id="cancelAccount" class="btn btn-ghost flex-1">Cancel</button>
             </div>
         </div>
     </div>
 
     <script src="/static/app.js"></script>
+    <script>
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                // Update buttons
+                document.querySelectorAll('.tab-btn').forEach(b => {
+                    b.classList.remove('active', 'text-blue-600', 'dark:text-blue-400');
+                    b.classList.add('text-gray-500', 'dark:text-gray-400');
+                });
+                btn.classList.add('active', 'text-blue-600', 'dark:text-blue-400');
+                btn.classList.remove('text-gray-500', 'dark:text-gray-400');
+
+                // Show content
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+            });
+        });
+
+        // Update status dot based on bot status
+        const originalLoadBotStatus = loadBotStatus;
+        loadBotStatus = async function() {
+            await originalLoadBotStatus();
+            const statusText = document.getElementById('botStatus').textContent;
+            const dot = document.getElementById('statusDot');
+            if (statusText.includes('Running')) {
+                dot.classList.remove('stopped');
+                dot.classList.add('running');
+            } else {
+                dot.classList.remove('running');
+                dot.classList.add('stopped');
+            }
+        };
+
+        // Load recent activity for dashboard
+        async function loadRecentActivity() {
+            try {
+                const response = await fetch('/api/history?limit=5');
+                const history = await response.json();
+                const tbody = document.getElementById('recentActivity');
+
+                if (history.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="py-8 text-center text-gray-400">No recent activity</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = history.map(h => `
+                    <tr class="table-row border-b border-gray-50 dark:border-gray-700/50">
+                        <td class="py-3 text-gray-500 dark:text-gray-400">${formatDate(h.timestamp)}</td>
+                        <td class="py-3 text-gray-900 dark:text-white truncate max-w-[200px]" title="${h.market_hash_name}">${h.market_hash_name}</td>
+                        <td class="py-3 text-gray-500 dark:text-gray-400">${formatPrice(h.old_price_cents)}</td>
+                        <td class="py-3 text-green-600 dark:text-green-400 font-medium">${formatPrice(h.new_price_cents)}</td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Error loading recent activity:', e);
+            }
+        }
+
+        // Update total orders count
+        const originalLoadOrders = loadOrders;
+        loadOrders = async function() {
+            await originalLoadOrders();
+            const rows = document.querySelectorAll('#ordersTable tr');
+            const count = rows.length > 0 && !rows[0].querySelector('td[colspan]') ? rows.length : 0;
+            document.getElementById('totalOrders').textContent = count;
+        };
+
+        // Initial load of recent activity
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRecentActivity();
+            setInterval(loadRecentActivity, 60000);
+        });
+    </script>
 </body>
 </html>

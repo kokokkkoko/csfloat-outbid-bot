@@ -393,38 +393,49 @@ async function loadAccounts() {
         tbody.innerHTML = '';
 
         if (accounts.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500 dark:text-gray-400">No accounts yet. Add one to get started!</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No accounts yet</td></tr>';
             return;
         }
 
         accounts.forEach(account => {
             const row = document.createElement('tr');
-            row.className = 'dark:bg-gray-800';
+            row.className = 'table-row border-b border-gray-50 dark:border-gray-700/50';
             row.innerHTML = `
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <span class="font-medium dark:text-white">${account.name}</span>
+                <td class="px-4 py-3">
+                    <span class="font-medium text-gray-900 dark:text-white">${account.name}</span>
                     ${account.is_active ? '' : '<span class="ml-2 text-xs text-red-500">(Inactive)</span>'}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${account.api_key}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${account.proxy || 'None'}</td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <span class="status-${account.status}">
-                        ${account.status === 'online' ? '🟢' : account.status === 'error' ? '🔴' : '⚪'}
+                <td class="px-4 py-3">
+                    <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+                        account.status === 'online' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                        account.status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                        'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                    }">
+                        <span class="w-1.5 h-1.5 rounded-full ${
+                            account.status === 'online' ? 'bg-green-500' :
+                            account.status === 'error' ? 'bg-red-500' : 'bg-gray-400'
+                        }"></span>
                         ${account.status}
                     </span>
-                    ${account.error_message ? `<br><span class="text-xs text-red-500">${account.error_message}</span>` : ''}
+                    ${account.error_message ? `<div class="text-xs text-red-500 mt-1">${account.error_message}</div>` : ''}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${formatDate(account.last_check)}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm">
-                    <button onclick="testAccount(${account.id})" class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 mr-2">
-                        <i class="fas fa-check"></i>
-                    </button>
-                    <button onclick="toggleAccount(${account.id}, ${!account.is_active})" class="text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-300 mr-2">
-                        <i class="fas fa-${account.is_active ? 'pause' : 'play'}"></i>
-                    </button>
-                    <button onclick="deleteAccount(${account.id})" class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300">
-                        <i class="fas fa-trash"></i>
-                    </button>
+                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">${account.proxy ? '✓ Configured' : 'None'}</td>
+                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">${formatDate(account.last_check)}</td>
+                <td class="px-4 py-3 text-right">
+                    <div class="flex items-center justify-end gap-1">
+                        <button onclick="testAccount(${account.id})" class="w-8 h-8 rounded-lg flex items-center justify-center text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20" title="Test connection">
+                            <i class="fas fa-check"></i>
+                        </button>
+                        <button onclick="syncAccountOrders(${account.id})" class="w-8 h-8 rounded-lg flex items-center justify-center text-purple-600 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20" title="Sync orders">
+                            <i class="fas fa-sync"></i>
+                        </button>
+                        <button onclick="toggleAccount(${account.id}, ${!account.is_active})" class="w-8 h-8 rounded-lg flex items-center justify-center text-yellow-600 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20" title="${account.is_active ? 'Disable' : 'Enable'}">
+                            <i class="fas fa-${account.is_active ? 'pause' : 'play'}"></i>
+                        </button>
+                        <button onclick="deleteAccount(${account.id})" class="w-8 h-8 rounded-lg flex items-center justify-center text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20" title="Delete">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
                 </td>
             `;
             tbody.appendChild(row);
@@ -528,6 +539,25 @@ async function testAccount(accountId) {
     }
 }
 
+async function syncAccountOrders(accountId) {
+    try {
+        showNotification('Syncing orders...', 'info');
+        const response = await fetch(`${API_BASE}/api/accounts/${accountId}/sync-orders`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            showNotification('Orders synced successfully!', 'success');
+            await loadOrders();
+        } else {
+            const data = await response.json();
+            showNotification(`Error: ${data.detail}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Error syncing orders: ${error.message}`, 'error');
+    }
+}
+
 // === Orders ===
 
 async function syncAndLoadOrders() {
@@ -566,7 +596,7 @@ async function loadOrders() {
         tbody.innerHTML = '';
 
         if (orders.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500 dark:text-gray-400">No active orders</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">No active orders</td></tr>';
             return;
         }
 
@@ -575,48 +605,44 @@ async function loadOrders() {
                 ? `${order.float_min?.toFixed(4)} - ${order.float_max?.toFixed(4)}`
                 : '-';
 
-            const maxPrice = order.max_price_cents
-                ? formatPrice(order.max_price_cents)
-                : 'None';
-
             // Construct Steam CDN icon URL
             const iconHtml = order.icon_url
                 ? `<img src="https://community.akamai.steamstatic.com/economy/image/${order.icon_url}"
-                       class="w-12 h-12 rounded object-cover flex-shrink-0"
+                       class="w-10 h-10 rounded-lg object-cover flex-shrink-0"
                        onerror="this.style.display='none'"
                        loading="lazy">`
-                : `<div class="w-12 h-12 rounded bg-gray-200 dark:bg-gray-600 flex items-center justify-center flex-shrink-0">
-                       <i class="fas fa-image text-gray-400 dark:text-gray-500"></i>
+                : `<div class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center flex-shrink-0">
+                       <i class="fas fa-cube text-gray-400 dark:text-gray-500"></i>
                    </div>`;
 
             const row = document.createElement('tr');
-            row.className = 'dark:bg-gray-800';
+            row.className = 'table-row border-b border-gray-50 dark:border-gray-700/50';
             row.innerHTML = `
-                <td class="px-6 py-4">
+                <td class="px-4 py-3">
                     <div class="flex items-center gap-3">
                         ${iconHtml}
                         <div class="min-w-0">
-                            <div class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-xs" title="${order.market_hash_name}">${order.market_hash_name}</div>
-                            <div class="text-xs text-gray-500 dark:text-gray-400">ID: ${order.order_id}</div>
+                            <div class="font-medium text-gray-900 dark:text-white truncate max-w-[200px]" title="${order.market_hash_name}">${order.market_hash_name}</div>
                         </div>
                     </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium dark:text-white">${formatPrice(order.price_cents)}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm">
-                    <span class="px-2 py-1 rounded ${order.order_type === 'advanced' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'}">
+                <td class="px-4 py-3">
+                    <span class="font-semibold text-gray-900 dark:text-white">${formatPrice(order.price_cents)}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="inline-flex px-2 py-1 rounded-md text-xs font-medium ${order.order_type === 'advanced' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'}">
                         ${order.order_type}
                     </span>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${floatRange}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm">
-                    <span class="${order.outbid_count > 5 ? 'text-red-600 font-bold' : 'text-gray-900 dark:text-white'}">
+                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">${floatRange}</td>
+                <td class="px-4 py-3">
+                    <span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${order.outbid_count > 5 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'}">
                         ${order.outbid_count}
                     </span>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${maxPrice}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm">
-                    <button onclick="deleteOrder('${order.order_id}')" class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300">
-                        <i class="fas fa-times"></i> Cancel
+                <td class="px-4 py-3 text-right">
+                    <button onclick="deleteOrder('${order.order_id}')" class="w-8 h-8 rounded-lg flex items-center justify-center text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20" title="Cancel order">
+                        <i class="fas fa-times"></i>
                     </button>
                 </td>
             `;
@@ -660,19 +686,19 @@ async function loadHistory() {
         tbody.innerHTML = '';
 
         if (history.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500 dark:text-gray-400">No outbid history yet</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-400">No history yet</td></tr>';
             return;
         }
 
         history.forEach(h => {
             const row = document.createElement('tr');
-            row.className = 'dark:bg-gray-800';
+            row.className = 'table-row border-b border-gray-50 dark:border-gray-700/50';
             row.innerHTML = `
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${formatDate(h.timestamp)}</td>
-                <td class="px-6 py-4 text-sm text-gray-900 dark:text-white">${h.market_hash_name}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${formatPrice(h.old_price_cents)}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600 dark:text-green-400">${formatPrice(h.new_price_cents)}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">${formatPrice(h.competitor_price_cents)}</td>
+                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">${formatDate(h.timestamp)}</td>
+                <td class="px-4 py-3 text-gray-900 dark:text-white truncate max-w-[200px]" title="${h.market_hash_name}">${h.market_hash_name}</td>
+                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">${formatPrice(h.old_price_cents)}</td>
+                <td class="px-4 py-3 font-medium text-green-600 dark:text-green-400">${formatPrice(h.new_price_cents)}</td>
+                <td class="px-4 py-3 text-red-600 dark:text-red-400">${formatPrice(h.competitor_price_cents)}</td>
             `;
             tbody.appendChild(row);
         });

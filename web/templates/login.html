@@ -3,11 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - CSFloat Outbid Bot</title>
+    <title>Login - CSFloat Bot</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = { darkMode: 'class' }
-    </script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script>
         if (localStorage.getItem('theme') === 'dark' ||
@@ -15,59 +13,100 @@
             document.documentElement.classList.add('dark');
         }
     </script>
+    <style>
+        * { transition: background-color 0.2s, border-color 0.2s, color 0.2s; }
+        .input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            background: white;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .dark .input {
+            background: #374151;
+            border-color: #4b5563;
+            color: white;
+        }
+        .dark .input:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+        .btn:hover:not(:disabled) {
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+            transform: translateY(-1px);
+        }
+        .btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
-<body class="bg-gray-100 dark:bg-gray-900 transition-colors duration-300">
-    <div class="min-h-screen flex items-center justify-center">
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
-            <!-- Logo -->
-            <div class="text-center mb-8">
-                <h1 class="text-3xl font-bold text-gray-800 dark:text-white">
-                    <i class="fas fa-robot text-blue-600 dark:text-blue-400"></i>
-                    CSFloat Bot
-                </h1>
-                <p class="text-gray-600 dark:text-gray-400 mt-2">Sign in to your account</p>
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-sm">
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                <i class="fas fa-robot text-white text-2xl"></i>
             </div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Welcome back</h1>
+            <p class="text-gray-500 dark:text-gray-400 mt-1">Sign in to CSFloat Bot</p>
+        </div>
 
+        <!-- Card -->
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
             <!-- Error Message -->
-            <div id="errorMessage" class="hidden bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 px-4 py-3 rounded mb-4">
-                <i class="fas fa-exclamation-circle"></i>
-                <span id="errorText"></span>
+            <div id="errorMessage" class="hidden mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                <p class="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span id="errorText"></span>
+                </p>
             </div>
 
             <!-- Login Form -->
-            <form id="loginForm">
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        <i class="fas fa-user"></i> Username
-                    </label>
-                    <input type="text" id="username" required
-                           class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                           placeholder="Enter your username">
+            <form id="loginForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Username</label>
+                    <input type="text" id="username" required class="input" placeholder="Enter username">
                 </div>
 
-                <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        <i class="fas fa-lock"></i> Password
-                    </label>
-                    <input type="password" id="password" required
-                           class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                           placeholder="Enter your password">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password</label>
+                    <input type="password" id="password" required class="input" placeholder="Enter password">
                 </div>
 
-                <button type="submit" id="loginBtn"
-                        class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition">
-                    <i class="fas fa-sign-in-alt"></i> Sign In
+                <button type="submit" id="loginBtn" class="btn mt-6">
+                    <span>Sign In</span>
+                    <i class="fas fa-arrow-right"></i>
                 </button>
             </form>
-
-            <!-- Register Link -->
-            <p class="mt-6 text-center text-gray-600 dark:text-gray-400">
-                Don't have an account?
-                <a href="/register" class="text-blue-500 dark:text-blue-400 hover:underline font-medium">
-                    Create one
-                </a>
-            </p>
         </div>
+
+        <!-- Register Link -->
+        <p class="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
+            Don't have an account?
+            <a href="/register" class="text-blue-600 dark:text-blue-400 hover:underline font-medium ml-1">Create one</a>
+        </p>
     </div>
 
     <script>
@@ -82,7 +121,6 @@
             const errorDiv = document.getElementById('errorMessage');
             const errorText = document.getElementById('errorText');
 
-            // Disable button
             loginBtn.disabled = true;
             loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
 
@@ -96,14 +134,10 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    // Save token and user info
                     localStorage.setItem('access_token', data.access_token);
                     localStorage.setItem('user', JSON.stringify(data.user));
-
-                    // Redirect to dashboard
                     window.location.href = '/';
                 } else {
-                    // Show error
                     errorDiv.classList.remove('hidden');
                     errorText.textContent = data.detail || 'Login failed';
                 }
@@ -111,13 +145,11 @@
                 errorDiv.classList.remove('hidden');
                 errorText.textContent = 'Connection error: ' + error.message;
             } finally {
-                // Re-enable button
                 loginBtn.disabled = false;
-                loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign In';
+                loginBtn.innerHTML = '<span>Sign In</span><i class="fas fa-arrow-right"></i>';
             }
         });
 
-        // Check if already logged in
         if (localStorage.getItem('access_token')) {
             window.location.href = '/';
         }
