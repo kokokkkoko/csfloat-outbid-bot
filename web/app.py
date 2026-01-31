@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from loguru import logger
 
-from database import db, get_db, Account, BuyOrder, OutbidHistory, User
+from database import db, get_db, Account, BuyOrder, OutbidHistory, User, AppSettings
 from accounts import AccountManager
 from bot.manager import bot_manager
 from config import settings
@@ -88,6 +88,31 @@ async def startup_event():
     """Инициализация при запуске"""
     logger.info("Starting web application...")
     await db.init()
+
+    # Load settings from database (overrides environment variables)
+    async for session in db.get_session():
+        result = await session.execute(select(AppSettings))
+        db_settings = result.scalars().all()
+
+        for setting in db_settings:
+            if setting.key == "check_interval":
+                settings.check_interval = int(setting.value)
+                logger.info(f"Loaded check_interval from DB: {settings.check_interval}")
+            elif setting.key == "outbid_step":
+                settings.outbid_step = float(setting.value)
+                logger.info(f"Loaded outbid_step from DB: {settings.outbid_step}")
+            elif setting.key == "max_outbids":
+                settings.max_outbids = int(setting.value)
+                logger.info(f"Loaded max_outbids from DB: {settings.max_outbids}")
+            elif setting.key == "max_outbid_multiplier":
+                settings.max_outbid_multiplier = float(setting.value)
+                logger.info(f"Loaded max_outbid_multiplier from DB: {settings.max_outbid_multiplier}")
+            elif setting.key == "max_outbid_premium_cents":
+                settings.max_outbid_premium_cents = int(setting.value)
+                logger.info(f"Loaded max_outbid_premium_cents from DB: {settings.max_outbid_premium_cents}")
+
+        break  # Exit after first session
+
     logger.success("Web application started")
 
 
@@ -899,30 +924,47 @@ async def get_settings():
 
 
 @app.put("/api/settings")
-async def update_settings(settings_data: SettingsUpdate):
+async def update_settings(settings_data: SettingsUpdate, session: AsyncSession = Depends(get_db)):
     """Обновить настройки"""
-    # TODO: Сохранять в БД или файл
-    # Пока обновляем только в памяти
+    async def save_setting(key: str, value):
+        """Save a setting to database"""
+        result = await session.execute(select(AppSettings).where(AppSettings.key == key))
+        setting = result.scalar_one_or_none()
+
+        if setting:
+            setting.value = str(value)
+            setting.updated_at = datetime.utcnow()
+        else:
+            setting = AppSettings(key=key, value=str(value))
+            session.add(setting)
+        await session.commit()
+
+    # Update runtime settings and save to database
     if settings_data.check_interval is not None:
         old_value = settings.check_interval
         settings.check_interval = settings_data.check_interval
-        logger.info(f"Updated check_interval: {old_value} -> {settings.check_interval}")
+        await save_setting("check_interval", settings_data.check_interval)
+        logger.info(f"Updated check_interval: {old_value} -> {settings.check_interval} (saved to DB)")
     if settings_data.outbid_step is not None:
         old_value = settings.outbid_step
         settings.outbid_step = settings_data.outbid_step
-        logger.info(f"Updated outbid_step: {old_value} -> {settings.outbid_step}")
+        await save_setting("outbid_step", settings_data.outbid_step)
+        logger.info(f"Updated outbid_step: {old_value} -> {settings.outbid_step} (saved to DB)")
     if settings_data.max_outbids is not None:
         old_value = settings.max_outbids
         settings.max_outbids = settings_data.max_outbids
-        logger.info(f"Updated max_outbids: {old_value} -> {settings.max_outbids}")
+        await save_setting("max_outbids", settings_data.max_outbids)
+        logger.info(f"Updated max_outbids: {old_value} -> {settings.max_outbids} (saved to DB)")
     if settings_data.max_outbid_multiplier is not None:
         old_value = settings.max_outbid_multiplier
         settings.max_outbid_multiplier = settings_data.max_outbid_multiplier
-        logger.info(f"Updated max_outbid_multiplier: {old_value} -> {settings.max_outbid_multiplier}")
+        await save_setting("max_outbid_multiplier", settings_data.max_outbid_multiplier)
+        logger.info(f"Updated max_outbid_multiplier: {old_value} -> {settings.max_outbid_multiplier} (saved to DB)")
     if settings_data.max_outbid_premium is not None:
         old_value = settings.max_outbid_premium_cents
         settings.max_outbid_premium_cents = int(settings_data.max_outbid_premium * 100)  # доллары -> центы
-        logger.info(f"Updated max_outbid_premium_cents: {old_value} -> {settings.max_outbid_premium_cents}")
+        await save_setting("max_outbid_premium_cents", settings.max_outbid_premium_cents)
+        logger.info(f"Updated max_outbid_premium_cents: {old_value} -> {settings.max_outbid_premium_cents} (saved to DB)")
 
     return {"status": "success"}
 
