@@ -50,7 +50,7 @@ def get_random_headers() -> dict:
         'User-Agent': random.choice(USER_AGENTS),
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': random.choice(ACCEPT_LANGUAGES),
-        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Encoding': 'gzip, deflate',
         'Origin': 'https://csfloat.com',
         'Referer': 'https://csfloat.com/',
         'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
