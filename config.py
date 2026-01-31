@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     max_requests_per_minute: int = Field(default=60, description="Global API rate limit")
     max_requests_per_account: int = Field(default=30, description="Per-account rate limit")
 
+    # Anti-detection settings
+    min_request_delay: float = Field(default=1.0, description="Minimum delay between requests (seconds)")
+    max_request_delay: float = Field(default=3.0, description="Maximum delay between requests (seconds)")
+    proxy_list: str = Field(default="", description="Comma-separated list of proxies for rotation")
+
     # Admin panel settings
     admin_enabled: bool = Field(
         default=True,

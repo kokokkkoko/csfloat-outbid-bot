@@ -3,6 +3,8 @@ Account management module
 """
 from typing import Optional, List
 from datetime import datetime
+import random
+import asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from csfloat_api.csfloat_client import Client as CSFloatClientBase
@@ -12,22 +14,96 @@ from loguru import logger
 from database import Account
 
 
-class CSFloatClient(CSFloatClientBase):
-    """Обертка над CSFloatClient с исправленным DNS resolver и SSL"""
+# Realistic User-Agent strings (Chrome, Firefox, Safari on different OS)
+USER_AGENTS = [
+    # Chrome on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    # Chrome on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+    # Firefox on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+    # Safari on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+]
 
-    def __init__(self, api_key: str, proxy: str = None) -> None:
+# Languages for Accept-Language header
+ACCEPT_LANGUAGES = [
+    "en-US,en;q=0.9",
+    "en-GB,en;q=0.9,en-US;q=0.8",
+    "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "en-US,en;q=0.9,ru;q=0.8",
+    "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+]
+
+
+def get_random_headers() -> dict:
+    """Generate realistic browser headers"""
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': random.choice(ACCEPT_LANGUAGES),
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Origin': 'https://csfloat.com',
+        'Referer': 'https://csfloat.com/',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Connection': 'keep-alive',
+    }
+
+
+class CSFloatClient(CSFloatClientBase):
+    """Обертка над CSFloatClient с anti-detection features"""
+
+    # Class-level rate limiting
+    _last_request_time: float = 0
+    _min_request_interval: float = 1.0  # Minimum 1 second between requests
+    _request_lock = None
+
+    def __init__(self, api_key: str, proxy: str = None, proxy_list: List[str] = None) -> None:
         self.API_KEY = api_key
         self.proxy = proxy
+        self.proxy_list = proxy_list or []  # List of proxies for rotation
+        self._current_proxy_index = 0
         self._validate_proxy()
-        self._headers = {
-            'Authorization': self.API_KEY
-        }
 
-        # Используем ThreadedResolver и force_close для избежания SSL проблем
-        if self.proxy:
+        # Random browser-like headers + Authorization
+        self._base_headers = get_random_headers()
+        self._base_headers['Authorization'] = self.API_KEY
+
+        self._connector = None
+        self._session = None
+        self._create_session()
+
+        logger.debug(f"CSFloatClient initialized (proxy: {self.proxy is not None}, proxy_list: {len(self.proxy_list)})")
+
+    def _create_session(self, proxy_url: str = None):
+        """Create or recreate aiohttp session with given proxy"""
+        proxy_to_use = proxy_url or self.proxy
+
+        # Close existing session if any
+        if self._session and not self._session.closed:
+            asyncio.create_task(self._session.close())
+
+        # Rotate headers on session creation
+        self._headers = get_random_headers()
+        self._headers['Authorization'] = self.API_KEY
+
+        if proxy_to_use:
             from aiohttp_socks.connector import ProxyConnector
             self._connector = ProxyConnector.from_url(
-                self.proxy,
+                proxy_to_use,
                 ttl_dns_cache=300,
                 force_close=True
             )
@@ -35,7 +111,7 @@ class CSFloatClient(CSFloatClientBase):
             self._connector = aiohttp.TCPConnector(
                 resolver=aiohttp.ThreadedResolver(),
                 limit_per_host=50,
-                force_close=True,  # Важно: закрываем соединения после использования
+                force_close=True,
                 enable_cleanup_closed=True
             )
 
@@ -45,7 +121,35 @@ class CSFloatClient(CSFloatClientBase):
             timeout=aiohttp.ClientTimeout(total=30)
         )
 
-        logger.debug(f"CSFloatClient initialized (proxy: {self.proxy is not None})")
+    def rotate_proxy(self) -> Optional[str]:
+        """Rotate to next proxy in the list"""
+        if not self.proxy_list:
+            return None
+
+        self._current_proxy_index = (self._current_proxy_index + 1) % len(self.proxy_list)
+        new_proxy = self.proxy_list[self._current_proxy_index]
+
+        logger.info(f"Rotating proxy to: {new_proxy[:30]}...")
+        self._create_session(new_proxy)
+        return new_proxy
+
+    def rotate_headers(self):
+        """Rotate User-Agent and other headers"""
+        new_headers = get_random_headers()
+        new_headers['Authorization'] = self.API_KEY
+        self._headers = new_headers
+
+        # Update session headers
+        if self._session:
+            self._session._default_headers = aiohttp.typedefs.CIMultiDict(new_headers)
+
+        logger.debug(f"Rotated headers, new UA: {new_headers['User-Agent'][:50]}...")
+
+    async def _rate_limited_request(self):
+        """Add random delay between requests to avoid detection"""
+        # Random delay between 0.5 and 2 seconds
+        delay = random.uniform(0.5, 2.0)
+        await asyncio.sleep(delay)
 
 
 class AccountManager:
