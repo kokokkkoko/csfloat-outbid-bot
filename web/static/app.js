@@ -777,11 +777,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadOrders();
     loadHistory();
 
-    // Auto-refresh every 10 seconds
+    // Auto-refresh every 60 seconds to avoid rate limiting
+    // WebSocket provides real-time updates for critical events, this is just a fallback
     setInterval(() => {
         loadBotStatus();
         loadAccounts();
         loadOrders();
         loadHistory();
-    }, 10000);
+    }, 60000);  // 60 seconds (WebSocket handles real-time updates)
 });
