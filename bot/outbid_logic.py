@@ -69,15 +69,16 @@ class OutbidLogic:
         if our_order.outbid_count >= settings.max_outbids:
             return False, f"Max outbids reached ({settings.max_outbids})"
 
-        # Проверка 3: Не превысим ли максимальную цену?
+        # Проверка 3: Не превысим ли потолок (от lowest listing)?
+        # Это главная защита от покупки дороже чем можно продать
         new_price_cents = competitor_price_cents + int(settings.outbid_step * 100)
 
-        if our_order.max_price_cents and new_price_cents > our_order.max_price_cents:
-            return False, f"New price (${new_price_cents/100:.2f}) exceeds max price (${our_order.max_price_cents/100:.2f})"
+        if price_ceiling_cents is None:
+            # Если нет lowest listing - не перебиваем (слишком рискованно)
+            return False, "No price ceiling available (no sell listings found)"
 
-        # Проверка 4: Не превысим ли потолок (от lowest listing)?
-        if price_ceiling_cents and new_price_cents > price_ceiling_cents:
-            return False, f"Price ceiling reached: ${new_price_cents/100:.2f} > ${price_ceiling_cents/100:.2f}"
+        if new_price_cents > price_ceiling_cents:
+            return False, f"Price ceiling reached: ${new_price_cents/100:.2f} > ${price_ceiling_cents/100:.2f} (would lose money)"
 
         return True, None
 

@@ -660,7 +660,7 @@ async def sync_orders(
                     def_index=def_index,  # Сохраняем DefIndex/PaintIndex
                     paint_index=paint_index,
                     outbid_count=0,
-                    max_price_cents=price_cents * 2,  # Устанавливаем макс цену в 2 раза выше текущей
+                    max_price_cents=None,  # Будет рассчитан динамически от lowest listing при перебивании
                     is_active=True
                 )
                 try:

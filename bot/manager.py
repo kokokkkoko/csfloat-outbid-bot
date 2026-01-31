@@ -212,10 +212,23 @@ class BotManager:
                 price_ceiling = outbid_logic.calculate_price_ceiling(lowest_listing_price)
                 logger.info(
                     f"Price ceiling for {order.market_hash_name}: ${price_ceiling/100:.2f} "
-                    f"(lowest listing: ${lowest_listing_price/100:.2f})"
+                    f"(from lowest listing: ${lowest_listing_price/100:.2f})"
                 )
             else:
-                logger.debug(f"No lowest listing found for {order.market_hash_name}, no price ceiling")
+                # Fallback: используем среднюю цену последних продаж
+                logger.info(f"No active listings found, checking sales history...")
+                avg_sale_price = await self._get_average_sale_price(client, order)
+                if avg_sale_price:
+                    price_ceiling = outbid_logic.calculate_price_ceiling(avg_sale_price)
+                    logger.info(
+                        f"Price ceiling for {order.market_hash_name}: ${price_ceiling/100:.2f} "
+                        f"(from avg sale price: ${avg_sale_price/100:.2f})"
+                    )
+                else:
+                    logger.warning(
+                        f"No price ceiling available for {order.market_hash_name} "
+                        f"(no listings and no sales history)"
+                    )
 
             # Проверяем, нужно ли перебивать (с учётом потолка)
             should_outbid, reason = outbid_logic.should_outbid(order, competitor_price, price_ceiling)
@@ -340,6 +353,80 @@ class BotManager:
 
         except Exception as e:
             logger.warning(f"Error getting lowest listing price for {order.market_hash_name}: {e}")
+            return None
+
+    async def _get_average_sale_price(
+        self,
+        client,
+        order: BuyOrder,
+        limit: int = 50
+    ) -> Optional[int]:
+        """
+        Получить среднюю цену последних продаж для предмета (fallback когда нет листингов)
+
+        Args:
+            client: CSFloat клиент
+            order: Ордер
+            limit: Количество продаж для анализа
+
+        Returns:
+            Средняя цена в центах или None если продаж нет
+        """
+        try:
+            import urllib.parse
+
+            # URL-encode market_hash_name для запроса
+            encoded_name = urllib.parse.quote(order.market_hash_name)
+            url = f"https://csfloat.com/api/v1/history/{encoded_name}/sales"
+
+            params = {
+                'paint_index': order.paint_index,
+                'limit': limit
+            }
+
+            # Делаем запрос через aiohttp session клиента
+            async with client._session.get(url, params=params) as response:
+                if response.status != 200:
+                    logger.warning(f"Failed to get sales history: {response.status}")
+                    return None
+
+                sales_data = await response.json()
+
+                if not sales_data or len(sales_data) == 0:
+                    logger.debug(f"No sales history found for {order.market_hash_name}")
+                    return None
+
+                # Фильтруем продажи по float range (для advanced orders)
+                if order.order_type == "advanced" and order.float_min and order.float_max:
+                    filtered_sales = [
+                        sale for sale in sales_data
+                        if order.float_min <= sale['item']['float_value'] <= order.float_max
+                    ]
+                else:
+                    filtered_sales = sales_data
+
+                if not filtered_sales:
+                    logger.debug(
+                        f"No sales in float range [{order.float_min}-{order.float_max}] "
+                        f"for {order.market_hash_name}"
+                    )
+                    return None
+
+                # Берем последние 10 продаж
+                recent_sales = filtered_sales[:10]
+                prices = [sale['price'] for sale in recent_sales]
+                avg_price = int(sum(prices) / len(prices))
+
+                logger.info(
+                    f"Average sale price for {order.market_hash_name} "
+                    f"(last {len(recent_sales)} sales, float {order.float_min}-{order.float_max}): "
+                    f"${avg_price/100:.2f}"
+                )
+
+                return avg_price
+
+        except Exception as e:
+            logger.warning(f"Error getting average sale price for {order.market_hash_name}: {e}")
             return None
 
     async def _get_top_buy_price(
