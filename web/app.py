@@ -471,6 +471,9 @@ async def sync_orders(
             market_hash_name_field = cf_order.get('market_hash_name', '')
             icon_url = None  # Для иконки скина
 
+            # Логируем для отладки
+            logger.info(f"Order {order_id}: expression={expression[:100] if expression else 'None'}..., market_hash_name_field={market_hash_name_field}")
+
             # Advanced ордера имеют expression с логикой (DefIndex ==, and, etc.)
             # Simple ордера имеют просто market_hash_name
             if expression and ('==' in expression or 'and' in expression or '>=' in expression):
@@ -508,32 +511,89 @@ async def sync_orders(
                 # 1. Сначала проверяем, есть ли в ответе CSFloat
                 market_hash_name = market_hash_name_field if market_hash_name_field else None
 
-                # 2. Проверяем есть ли Item == "название" в expression
+                # 2. Проверяем есть ли Item == "название" в expression (поддерживаем разные кавычки)
                 if not market_hash_name:
-                    item_match = re.search(r'Item\s*==\s*["\']([^"\']+)["\']', expression)
-                    if item_match:
-                        market_hash_name = item_match.group(1)
-                        logger.info(f"Extracted item name from expression: {market_hash_name}")
+                    # Пробуем разные паттерны кавычек: "", '', «», и без кавычек
+                    item_patterns = [
+                        r'Item\s*==\s*"([^"]+)"',           # Item == "name"
+                        r"Item\s*==\s*'([^']+)'",           # Item == 'name'
+                        r'Item\s*==\s*«([^»]+)»',           # Item == «name»
+                        r'Item\s*==\s*"([^"]+)"',           # Item == "name" (unicode quotes)
+                    ]
+                    for pattern in item_patterns:
+                        item_match = re.search(pattern, expression)
+                        if item_match:
+                            market_hash_name = item_match.group(1)
+                            logger.info(f"Extracted item name from expression: {market_hash_name}")
+                            break
 
-                # 3. Если всё ещё нет, используем skin_lookup
+                # 3. Если всё ещё нет, получаем через CSFloat API напрямую
                 if not market_hash_name:
-                    from skin_lookup import get_skin_info, build_fallback_name
-
                     if def_index and paint_index:
-                        logger.info(f"Fetching item name for DefIndex={def_index}, PaintIndex={paint_index}")
                         try:
-                            fetched_name, fetched_icon = await get_skin_info(
-                                def_index, paint_index, float_min, float_max
+                            logger.info(f"Fetching skin info from CSFloat: def={def_index}, paint={paint_index}")
+                            listings_response = await client.get_all_listings(
+                                def_index=def_index,
+                                paint_index=paint_index,
+                                limit=1
                             )
-                            market_hash_name = fetched_name
-                            if fetched_icon:
-                                icon_url = fetched_icon
-                                logger.info(f"Got skin info: {market_hash_name}")
+                            logger.info(f"CSFloat listings response: {type(listings_response)}")
+
+                            if listings_response:
+                                # Может быть dict или объект с атрибутом listings
+                                listings = None
+                                if isinstance(listings_response, dict):
+                                    listings = listings_response.get("data") or listings_response.get("listings") or []
+                                elif hasattr(listings_response, 'listings'):
+                                    listings = listings_response.listings
+                                elif hasattr(listings_response, 'data'):
+                                    listings = listings_response.data
+
+                                logger.info(f"Found {len(listings) if listings else 0} listings")
+
+                                if listings and len(listings) > 0:
+                                    first = listings[0]
+                                    # Получаем item object
+                                    item_obj = first.get("item", {}) if isinstance(first, dict) else getattr(first, 'item', None)
+
+                                    if item_obj:
+                                        # Извлекаем имя
+                                        if isinstance(item_obj, dict):
+                                            item_name = item_obj.get("item_name") or item_obj.get("name") or item_obj.get("market_hash_name", "")
+                                            icon_url = item_obj.get("icon_url")
+                                        else:
+                                            item_name = getattr(item_obj, 'item_name', None) or getattr(item_obj, 'name', None) or getattr(item_obj, 'market_hash_name', "")
+                                            icon_url = getattr(item_obj, 'icon_url', None)
+
+                                        # Убираем wear из имени если есть
+                                        if item_name and " (" in item_name:
+                                            item_name = item_name.rsplit(" (", 1)[0]
+
+                                        logger.info(f"Extracted from CSFloat: name={item_name}, icon={'yes' if icon_url else 'no'}")
+
+                                        if item_name:
+                                            # Добавляем wear на основе float range
+                                            wear = ""
+                                            if float_min is not None and float_max is not None:
+                                                avg = (float_min + float_max) / 2
+                                                if avg < 0.07: wear = "Factory New"
+                                                elif avg < 0.15: wear = "Minimal Wear"
+                                                elif avg < 0.38: wear = "Field-Tested"
+                                                elif avg < 0.45: wear = "Well-Worn"
+                                                else: wear = "Battle-Scarred"
+
+                                            market_hash_name = f"{item_name} ({wear})" if wear else item_name
+
                         except Exception as e:
-                            logger.warning(f"Error fetching skin info: {e}")
-                            market_hash_name = build_fallback_name(def_index, paint_index, float_min, float_max)
-                    else:
-                        market_hash_name = expression
+                            logger.error(f"Error fetching skin info: {e}")
+
+                    # Fallback если ничего не получилось
+                    if not market_hash_name:
+                        from skin_lookup import WEAPON_NAMES, get_wear_name
+                        weapon = WEAPON_NAMES.get(def_index, f"Weapon #{def_index}") if def_index else "Unknown"
+                        wear = get_wear_name(float_min, float_max) if float_min or float_max else ""
+                        market_hash_name = f"{weapon} | Skin #{paint_index} ({wear})" if wear else f"{weapon} | Skin #{paint_index}"
+                        logger.warning(f"Using fallback name: {market_hash_name}")
                 else:
                     logger.info(f"Using market_hash_name from CSFloat response: {market_hash_name}")
             else:

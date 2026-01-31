@@ -388,47 +388,137 @@ class BotManager:
                 )
 
                 # category: 0 = any, 1 = normal, 2 = stattrak, 3 = souvenir
-                # Фильтруем по float range, чтобы найти листинг нужного качества
+                # Стратегия: Сначала пробуем найти листинги с НУЖНЫМ float диапазоном,
+                # так как их buy orders - наши прямые конкуренты.
+                # Если не найдем - возьмем ЛЮБЫЕ листинги этого скина (fallback ниже).
+                logger.debug(
+                    f"Searching for listings with float range "
+                    f"[{order.float_min}-{order.float_max}]"
+                )
                 listings_response = await client.get_all_listings(
                     def_index=order.def_index,
                     paint_index=order.paint_index,
                     category=1,  # Только normal (не StatTrak)
                     min_float=order.float_min if order.float_min is not None else None,
                     max_float=order.float_max if order.float_max is not None else None,
-                    limit=1,
-                    type_="buy_now"
+                    limit=50  # Увеличено до 50 для большего покрытия
                 )
 
             # Проверяем есть ли листинги
             if not listings_response or "listings" not in listings_response:
-                logger.debug(f"No listings found for {order.market_hash_name}")
+                logger.warning(
+                    f"No listings response for {order.market_hash_name} "
+                    f"(response={listings_response is not None})"
+                )
                 return None
 
             listings = listings_response["listings"]
             if not listings:
-                logger.debug(f"No active listings for {order.market_hash_name}")
-                return None
+                logger.warning(
+                    f"No active listings for {order.market_hash_name} with float range "
+                    f"[{order.float_min}-{order.float_max}]. "
+                    f"Will try without float filter to find buy orders from other listings."
+                )
+                # Fallback 1: КРИТИЧЕСКИ ВАЖНО - пробуем БЕЗ фильтра по float
+                # Buy orders существуют даже если нет листингов с нашим float!
+                # Получим листинги с другим float (например 0.15-0.20 или 0.25-0.30),
+                # и их buy orders могут пересекаться с нашим диапазоном.
+                if order.order_type == "advanced":
+                    logger.info("Trying to find ANY listings of this skin (without float filter)...")
+                    listings_response = await client.get_all_listings(
+                        def_index=order.def_index,
+                        paint_index=order.paint_index,
+                        category=1,
+                        limit=50  # Увеличено до 50
+                    )
+                    if listings_response and "listings" in listings_response:
+                        listings = listings_response["listings"]
+                        if listings:
+                            logger.info(
+                                f"Found {len(listings)} listings without float filter. "
+                                f"Buy orders from these listings may still compete with us!"
+                            )
 
-            # Берем первый листинг
-            listing = listings[0]
-            listing_id = listing.id
+                # Fallback 2: по market_hash_name
+                if not listings:
+                    logger.info("Trying to find listings by market_hash_name...")
+                    listings_response = await client.get_all_listings(
+                        market_hash_name=order.market_hash_name,
+                        limit=50
+                    )
+                    if listings_response and "listings" in listings_response:
+                        listings = listings_response["listings"]
+                        if listings:
+                            logger.info(f"Found {len(listings)} listings by market_hash_name")
 
-            logger.debug(f"Found listing {listing_id} for {order.market_hash_name}")
+                if not listings:
+                    logger.warning(
+                        f"Still no listings found for {order.market_hash_name}. "
+                        f"Cannot check for competing buy orders."
+                    )
+                    return None
 
-            # Шаг 2: Получить buy orders для этого листинга
-            # Для advanced orders нужно больше, так как многие могут не пересекаться по float
-            limit = 100 if order.order_type == "advanced" else 50
-            buy_orders = await client.get_buy_orders(
-                listing_id=listing_id,
-                limit=limit,
-                raw_response=True
+            # Логируем float values найденных листингов для отладки
+            float_values = [getattr(l, 'float_value', 'N/A') for l in listings[:5]]
+            logger.info(
+                f"Found {len(listings)} listings for {order.market_hash_name}, "
+                f"will check buy orders for each. "
+                f"Sample float values: {float_values}"
             )
 
-            logger.debug(f"Got {len(buy_orders) if buy_orders else 0} buy orders from API")
+            # Шаг 2: Для advanced orders проверяем buy orders для КАЖДОГО листинга
+            # так как buy orders с разными float ranges конкурируют за разные листинги
+            all_buy_orders = []
+            limit = 100 if order.order_type == "advanced" else 50
 
-            if not buy_orders or len(buy_orders) == 0:
-                logger.debug(f"No buy orders for {order.market_hash_name}")
+            for idx, listing in enumerate(listings, 1):
+                listing_id = listing.id
+                logger.debug(
+                    f"[{idx}/{len(listings)}] Checking listing {listing_id} "
+                    f"(float={getattr(listing, 'float_value', 'N/A')})"
+                )
+
+                try:
+                    buy_orders = await client.get_buy_orders(
+                        listing_id=listing_id,
+                        limit=limit,
+                        raw_response=True
+                    )
+
+                    if buy_orders and len(buy_orders) > 0:
+                        logger.debug(f"  Got {len(buy_orders)} buy orders for listing {listing_id}")
+                        all_buy_orders.extend(buy_orders)
+                    else:
+                        logger.debug(f"  No buy orders for listing {listing_id}")
+
+                except Exception as e:
+                    logger.warning(f"  Error getting buy orders for listing {listing_id}: {e}")
+                    continue
+
+            if not all_buy_orders:
+                logger.warning(
+                    f"No buy orders found for {order.market_hash_name} "
+                    f"across {len(listings)} listings"
+                )
                 return None
+
+            # Дедупликация: один buy order может конкурировать за несколько листингов
+            # Убираем дубликаты по price + expression/market_hash_name
+            seen = set()
+            unique_buy_orders = []
+            for bo in all_buy_orders:
+                key = (bo.get('price'), bo.get('expression') or bo.get('market_hash_name'))
+                if key not in seen:
+                    seen.add(key)
+                    unique_buy_orders.append(bo)
+
+            logger.info(
+                f"Got {len(all_buy_orders)} total buy orders from {len(listings)} listings, "
+                f"{len(unique_buy_orders)} unique for {order.market_hash_name}"
+            )
+
+            # Используем дедуплицированные buy orders
+            buy_orders = unique_buy_orders
 
             # Шаг 3: Фильтрация для advanced orders
             if order.order_type == "advanced":
@@ -436,14 +526,17 @@ class BotManager:
                 import re
                 filtered_orders = []
 
-                logger.debug(f"Filtering {len(buy_orders)} buy orders for float range overlap")
+                logger.info(
+                    f"Filtering {len(buy_orders)} buy orders for float range overlap "
+                    f"(our range: [{order.float_min}-{order.float_max}])"
+                )
 
-                for bo in buy_orders:
+                for idx, bo in enumerate(buy_orders, 1):
                     # Парсим expression из buy order
                     expression = bo.get('expression', '')
                     if not expression:
                         # Это simple order, пропускаем
-                        logger.debug(f"  Skipping simple order: price={bo.get('price', 0)}")
+                        logger.debug(f"  [{idx}/{len(buy_orders)}] Skipping simple order: price=${bo.get('price', 0)/100:.2f}")
                         continue
 
                     # Извлекаем float диапазон из expression
@@ -470,7 +563,7 @@ class BotManager:
                             ranges_overlap = False
 
                     logger.debug(
-                        f"  Competitor: price={bo.get('price', 0)}, "
+                        f"  [{idx}/{len(buy_orders)}] Competitor: price=${bo.get('price', 0)/100:.2f}, "
                         f"float=[{bo_float_min}-{bo_float_max}], "
                         f"overlap={ranges_overlap}"
                     )

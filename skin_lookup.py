@@ -1,168 +1,74 @@
 """
 Skin name lookup utility for CS2/CSGO items
-Uses CSFloat's public data or cached mappings
+Uses CSFloat API as the single source of truth
 """
 import aiohttp
+import asyncio
+import json
+import os
 from typing import Optional, Tuple
 from loguru import logger
 
-# Cache for skin data
-_skin_cache = {}
-_items_loaded = False
+# Persistent cache file path
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "skin_cache.json")
+
+# In-memory cache (loaded from file on startup)
+_skin_cache: dict = {}
+_session: Optional[aiohttp.ClientSession] = None
+_session_lock = asyncio.Lock()
 
 
-# Common weapon DefIndex mappings
+def _load_cache():
+    """Load cache from file"""
+    global _skin_cache
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                _skin_cache = json.load(f)
+            logger.info(f"Loaded {len(_skin_cache)} skins from cache")
+    except Exception as e:
+        logger.warning(f"Could not load skin cache: {e}")
+        _skin_cache = {}
+
+
+def _save_cache():
+    """Save cache to file"""
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_skin_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save skin cache: {e}")
+
+
+# Load cache on module import
+_load_cache()
+
+
+# Weapon DefIndex -> Name mapping
 WEAPON_NAMES = {
-    1: "Desert Eagle",
-    2: "Dual Berettas",
-    3: "Five-SeveN",
-    4: "Glock-18",
-    7: "AK-47",
-    8: "AUG",
-    9: "AWP",
-    10: "FAMAS",
-    11: "G3SG1",
-    13: "Galil AR",
-    14: "M249",
-    16: "M4A4",
-    17: "MAC-10",
-    19: "P90",
-    23: "MP5-SD",
-    24: "UMP-45",
-    25: "XM1014",
-    26: "PP-Bizon",
-    27: "MAG-7",
-    28: "Negev",
-    29: "Sawed-Off",
-    30: "Tec-9",
-    31: "Zeus x27",
-    32: "P2000",
-    33: "MP7",
-    34: "MP9",
-    35: "Nova",
-    36: "P250",
-    38: "SCAR-20",
-    39: "SG 553",
-    40: "SSG 08",
-    60: "M4A1-S",
-    61: "USP-S",
-    63: "CZ75-Auto",
-    64: "R8 Revolver",
-    500: "Bayonet",
-    503: "Flip Knife",
-    505: "Gut Knife",
-    506: "Karambit",
-    507: "M9 Bayonet",
-    508: "Huntsman Knife",
-    509: "Falchion Knife",
-    512: "Bowie Knife",
-    514: "Butterfly Knife",
-    515: "Shadow Daggers",
-    516: "Paracord Knife",
-    517: "Survival Knife",
-    518: "Ursus Knife",
-    519: "Navaja Knife",
-    520: "Nomad Knife",
-    521: "Stiletto Knife",
-    522: "Talon Knife",
-    523: "Classic Knife",
-    525: "Skeleton Knife",
-    526: "Kukri Knife",
-}
-
-# Popular Paint Index to Skin Name mapping
-# Key: (def_index, paint_index) -> skin_name (without weapon prefix)
-PAINT_NAMES = {
-    # Glock-18 (def_index=4)
-    (4, 3): "Fade",
-    (4, 38): "Dragon Tattoo",
-    (4, 48): "Candy Apple",
-    (4, 60): "Water Elemental",
-    (4, 680): "Bullet Queen",
-    (4, 1208): "Shinobu",
-    (4, 1215): "Gold Toof",
-    (4, 1162): "Winterized",
-    (4, 367): "Twilight Galaxy",
-
-    # FAMAS (def_index=10)
-    (10, 178): "Pulse",
-    (10, 248): "Styx",
-    (10, 294): "Djinn",
-    (10, 644): "Mecha Industries",
-    (10, 838): "Eye of Athena",
-    (10, 1202): "Darkwing",
-    (10, 1143): "Rapid Eye Movement",
-
-    # AK-47 (def_index=7)
-    (7, 44): "Case Hardened",
-    (7, 180): "Fire Serpent",
-    (7, 282): "Redline",
-    (7, 302): "Wasteland Rebel",
-    (7, 380): "Aquamarine Revenge",
-    (7, 456): "Fuel Injector",
-    (7, 524): "Bloodsport",
-    (7, 639): "Neon Rider",
-    (7, 675): "The Empress",
-    (7, 801): "Asiimov",
-    (7, 1019): "Nightwish",
-
-    # AWP (def_index=9)
-    (9, 84): "Graphite",
-    (9, 174): "Electric Hive",
-    (9, 227): "Redline",
-    (9, 279): "Asiimov",
-    (9, 344): "Man-o'-war",
-    (9, 395): "Hyper Beast",
-    (9, 662): "Neo-Noir",
-    (9, 756): "Wildfire",
-    (9, 1095): "Chromatic Aberration",
-    (9, 446): "Dragon Lore",
-
-    # M4A4 (def_index=16)
-    (16, 255): "Asiimov",
-    (16, 309): "Howl",
-    (16, 336): "Dragon King",
-    (16, 400): "Royal Paladin",
-    (16, 471): "Desolate Space",
-    (16, 512): "Buzz Kill",
-    (16, 632): "Neo-Noir",
-    (16, 844): "The Emperor",
-
-    # M4A1-S (def_index=60)
-    (60, 254): "Cyrex",
-    (60, 301): "Hyper Beast",
-    (60, 326): "Icarus Fell",
-    (60, 360): "Golden Coil",
-    (60, 445): "Mecha Industries",
-    (60, 587): "Decimator",
-    (60, 631): "Nightmare",
-    (60, 1001): "Welcome to the Jungle",
-
-    # USP-S (def_index=61)
-    (61, 60): "Dark Water",
-    (61, 217): "Caiman",
-    (61, 227): "Orion",
-    (61, 313): "Kill Confirmed",
-    (61, 504): "Neo-Noir",
-    (61, 653): "Cortex",
-    (61, 1122): "Ticket to Hell",
-
-    # Desert Eagle (def_index=1)
-    (1, 27): "Blaze",
-    (1, 37): "Golden Koi",
-    (1, 277): "Conspiracy",
-    (1, 711): "Mecha Industries",
-    (1, 831): "Printstream",
+    1: "Desert Eagle", 2: "Dual Berettas", 3: "Five-SeveN", 4: "Glock-18",
+    7: "AK-47", 8: "AUG", 9: "AWP", 10: "FAMAS", 11: "G3SG1", 13: "Galil AR",
+    14: "M249", 16: "M4A4", 17: "MAC-10", 19: "P90", 23: "MP5-SD", 24: "UMP-45",
+    25: "XM1014", 26: "PP-Bizon", 27: "MAG-7", 28: "Negev", 29: "Sawed-Off",
+    30: "Tec-9", 31: "Zeus x27", 32: "P2000", 33: "MP7", 34: "MP9", 35: "Nova",
+    36: "P250", 38: "SCAR-20", 39: "SG 553", 40: "SSG 08", 60: "M4A1-S",
+    61: "USP-S", 63: "CZ75-Auto", 64: "R8 Revolver",
+    500: "Bayonet", 503: "Flip Knife", 505: "Gut Knife", 506: "Karambit",
+    507: "M9 Bayonet", 508: "Huntsman Knife", 509: "Falchion Knife",
+    512: "Bowie Knife", 514: "Butterfly Knife", 515: "Shadow Daggers",
+    516: "Paracord Knife", 517: "Survival Knife", 518: "Ursus Knife",
+    519: "Navaja Knife", 520: "Nomad Knife", 521: "Stiletto Knife",
+    522: "Talon Knife", 523: "Classic Knife", 525: "Skeleton Knife", 526: "Kukri Knife",
 }
 
 
-# Float ranges to wear names
 def get_wear_name(float_min: Optional[float], float_max: Optional[float]) -> str:
-    """Determine wear name from float range"""
+    """Get wear name from float range"""
     if float_min is None and float_max is None:
         return ""
 
-    # Use the center of the range to determine wear
+    # Use center of range
     if float_min is not None and float_max is not None:
         center = (float_min + float_max) / 2
     elif float_min is not None:
@@ -182,69 +88,92 @@ def get_wear_name(float_min: Optional[float], float_max: Optional[float]) -> str
         return "Battle-Scarred"
 
 
-async def fetch_skin_name_from_csfloat(
-    def_index: int,
-    paint_index: int,
-    float_min: Optional[float] = None,
-    float_max: Optional[float] = None
-) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Fetch skin name and icon from CSFloat public listings API
-    Returns: (market_hash_name, icon_url) or (None, None) if failed
-    """
-    try:
-        # Build the API URL
-        url = f"https://csfloat.com/api/v1/listings?def_index={def_index}&paint_index={paint_index}&limit=1"
-        if float_min is not None:
-            url += f"&min_float={float_min}"
-        if float_max is not None:
-            url += f"&max_float={float_max}"
+async def _get_session() -> aiohttp.ClientSession:
+    """Get or create HTTP session"""
+    global _session
+    async with _session_lock:
+        if _session is None or _session.closed:
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, ssl=False) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data and "data" in data and len(data["data"]) > 0:
-                        item = data["data"][0].get("item", {})
-                        name = item.get("market_hash_name")
-                        icon = item.get("icon_url")
-                        if name:
-                            logger.info(f"Fetched skin name from CSFloat: {name}")
-                            return name, icon
+            connector = aiohttp.TCPConnector(
+                limit=10,
+                force_close=True,
+                ssl=ssl_context
+            )
+            _session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15),
+                connector=connector
+            )
+            logger.info("Created new aiohttp session for skin lookup")
+        return _session
+
+
+async def fetch_from_csfloat(def_index: int, paint_index: int) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Fetch skin name and icon from CSFloat API
+    Returns: (base_name without wear, icon_url) or (None, None)
+    """
+    url = (
+        f"https://csfloat.com/api/v1/listings"
+        f"?def_index={def_index}"
+        f"&paint_index={paint_index}"
+        f"&limit=1"
+    )
+
+    try:
+        session = await _get_session()
+        logger.info(f"Fetching from CSFloat: {url}")
+
+        async with session.get(url) as response:
+            logger.info(f"CSFloat response status: {response.status}")
+
+            if response.status == 200:
+                data = await response.json()
+                logger.info(f"CSFloat response keys: {list(data.keys())}")
+
+                listings = data.get("data") or []
+                logger.info(f"Found {len(listings)} listings")
+
+                if listings:
+                    listing = listings[0]
+                    item = listing.get("item", {})
+                    logger.info(f"Item keys: {list(item.keys())}")
+
+                    # Get name - try multiple fields
+                    name = item.get("item_name") or item.get("name")
+                    if not name:
+                        mhn = item.get("market_hash_name", "")
+                        logger.info(f"market_hash_name: {mhn}")
+                        if " (" in mhn:
+                            name = mhn.rsplit(" (", 1)[0]
+                        else:
+                            name = mhn
+
+                    # Get icon
+                    icon = item.get("icon_url")
+
+                    logger.info(f"Extracted: name={name}, icon={'yes' if icon else 'no'}")
+
+                    if name:
+                        return name, icon
+                else:
+                    logger.warning(f"No listings found for def={def_index}, paint={paint_index}")
+
+            elif response.status == 429:
+                logger.warning("CSFloat rate limit hit!")
+            else:
+                text = await response.text()
+                logger.error(f"CSFloat error {response.status}: {text[:200]}")
+
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout fetching def={def_index}, paint={paint_index}")
     except Exception as e:
-        logger.debug(f"Failed to fetch skin name from CSFloat: {e}")
+        logger.error(f"API error for def={def_index}, paint={paint_index}: {type(e).__name__}: {e}")
 
     return None, None
-
-
-def build_fallback_name(
-    def_index: Optional[int],
-    paint_index: Optional[int],
-    float_min: Optional[float] = None,
-    float_max: Optional[float] = None
-) -> str:
-    """
-    Build a readable fallback name from DefIndex/PaintIndex
-    """
-    weapon = WEAPON_NAMES.get(def_index, f"Weapon #{def_index}")
-    wear = get_wear_name(float_min, float_max)
-
-    # Try to get skin name from our database
-    skin_name = PAINT_NAMES.get((def_index, paint_index))
-
-    if skin_name:
-        # Found in our database
-        if wear:
-            return f"{weapon} | {skin_name} ({wear})"
-        else:
-            return f"{weapon} | {skin_name}"
-    else:
-        # Unknown skin - use paint index
-        if wear:
-            return f"{weapon} | Skin #{paint_index} ({wear})"
-        else:
-            return f"{weapon} | Skin #{paint_index}"
 
 
 async def get_skin_info(
@@ -254,24 +183,41 @@ async def get_skin_info(
     float_max: Optional[float] = None
 ) -> Tuple[str, Optional[str]]:
     """
-    Get skin name and icon URL
-    Tries CSFloat API first, falls back to constructed name
-    Returns: (market_hash_name, icon_url)
+    Get skin name and icon URL.
+    Uses cache first, then CSFloat API.
+    Returns: (full_name with wear, icon_url)
     """
-    # Check cache first
-    cache_key = (def_index, paint_index, float_min, float_max)
-    if cache_key in _skin_cache:
-        return _skin_cache[cache_key]
+    # Cache key: "def_paint" (without float, so same skin different floats share cache)
+    cache_key = f"{def_index}_{paint_index}"
 
-    # Try fetching from CSFloat
-    name, icon = await fetch_skin_name_from_csfloat(def_index, paint_index, float_min, float_max)
+    # Check cache for base name + icon
+    cached = _skin_cache.get(cache_key)
+    if cached:
+        base_name = cached.get("name")
+        icon = cached.get("icon")
+        if base_name:
+            wear = get_wear_name(float_min, float_max)
+            full_name = f"{base_name} ({wear})" if wear else base_name
+            return full_name, icon
 
-    if not name:
-        # Use fallback name
-        name = build_fallback_name(def_index, paint_index, float_min, float_max)
-        icon = None
+    # Fetch from API
+    base_name, icon = await fetch_from_csfloat(def_index, paint_index)
 
-    # Cache the result
-    _skin_cache[cache_key] = (name, icon)
+    if base_name:
+        # Save to cache
+        _skin_cache[cache_key] = {"name": base_name, "icon": icon}
+        _save_cache()
+        logger.info(f"Cached: {base_name}")
 
-    return name, icon
+        wear = get_wear_name(float_min, float_max)
+        full_name = f"{base_name} ({wear})" if wear else base_name
+        return full_name, icon
+
+    # Fallback: construct name from weapon + paint index
+    weapon = WEAPON_NAMES.get(def_index, f"Weapon #{def_index}")
+    wear = get_wear_name(float_min, float_max)
+    fallback_name = f"{weapon} | Skin #{paint_index}"
+    if wear:
+        fallback_name = f"{fallback_name} ({wear})"
+
+    return fallback_name, None
