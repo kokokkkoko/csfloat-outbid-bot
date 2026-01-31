@@ -504,7 +504,7 @@ class BotManager:
                     category=1,  # Только normal (не StatTrak)
                     min_float=order.float_min if order.float_min is not None else None,
                     max_float=order.float_max if order.float_max is not None else None,
-                    limit=15  # Reduced to avoid rate limiting
+                    limit=50
                 )
 
             # Проверяем есть ли листинги
@@ -533,7 +533,7 @@ class BotManager:
                         def_index=order.def_index,
                         paint_index=order.paint_index,
                         category=1,
-                        limit=15  # Reduced to avoid rate limiting
+                        limit=50
                     )
                     if listings_response and "listings" in listings_response:
                         listings = listings_response["listings"]
@@ -549,7 +549,7 @@ class BotManager:
                     await rate_limit_delay(1.0, 2.0)  # Rate limit before fallback
                     listings_response = await client.get_all_listings(
                         market_hash_name=order.market_hash_name,
-                        limit=15  # Reduced to avoid rate limiting
+                        limit=50
                     )
                     if listings_response and "listings" in listings_response:
                         listings = listings_response["listings"]
